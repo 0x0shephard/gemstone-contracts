@@ -31,6 +31,7 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
     event RecipientsUpdated(address platform, address vaultReserve, address insuranceReserve, address treasuryReserve);
     event SplitsUpdated(Splits splits);
     event SaleSettled(address indexed asset, address indexed seller, uint256 amount);
+    event Distribution(address indexed asset, address indexed recipient, uint256 grossAmount, uint256 netReceived);
 
     error InvalidAddress();
     error InvalidSplits();
@@ -148,10 +149,15 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         uint256 treasuryAmount = amount - sellerAmount - platformAmount - vaultAmount - insuranceAmount;
 
         _sendNative(seller, sellerAmount);
+        emit Distribution(address(0), seller, sellerAmount, sellerAmount);
         _sendNative(platformRecipient, platformAmount);
+        emit Distribution(address(0), platformRecipient, platformAmount, platformAmount);
         _sendNative(vaultReserveRecipient, vaultAmount);
+        emit Distribution(address(0), vaultReserveRecipient, vaultAmount, vaultAmount);
         _sendNative(insuranceReserveRecipient, insuranceAmount);
+        emit Distribution(address(0), insuranceReserveRecipient, insuranceAmount, insuranceAmount);
         _sendNative(treasuryReserveRecipient, treasuryAmount);
+        emit Distribution(address(0), treasuryReserveRecipient, treasuryAmount, treasuryAmount);
     }
 
     function _distributeToken(address token, address seller, uint256 amount) private {
@@ -163,11 +169,22 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         uint256 insuranceAmount = _amount(amount, s.insuranceReserveBps);
         uint256 treasuryAmount = amount - sellerAmount - platformAmount - vaultAmount - insuranceAmount;
 
-        IERC20(token).safeTransfer(seller, sellerAmount);
-        IERC20(token).safeTransfer(platformRecipient, platformAmount);
-        IERC20(token).safeTransfer(vaultReserveRecipient, vaultAmount);
-        IERC20(token).safeTransfer(insuranceReserveRecipient, insuranceAmount);
-        IERC20(token).safeTransfer(treasuryReserveRecipient, treasuryAmount);
+        _sendToken(token, seller, sellerAmount);
+        _sendToken(token, platformRecipient, platformAmount);
+        _sendToken(token, vaultReserveRecipient, vaultAmount);
+        _sendToken(token, insuranceReserveRecipient, insuranceAmount);
+        _sendToken(token, treasuryReserveRecipient, treasuryAmount);
+    }
+
+    function _sendToken(address token, address to, uint256 amount) private {
+        if (amount == 0) {
+            emit Distribution(token, to, 0, 0);
+            return;
+        }
+        uint256 beforeBalance = IERC20(token).balanceOf(to);
+        IERC20(token).safeTransfer(to, amount);
+        uint256 netReceived = IERC20(token).balanceOf(to) - beforeBalance;
+        emit Distribution(token, to, amount, netReceived);
     }
 
     function _sendNative(address to, uint256 amount) private {

@@ -10,6 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {DGENFT} from "./DGENFT.sol";
+import {GemRegistry} from "./GemRegistry.sol";
 import {PaymentTokenRegistry} from "./PaymentTokenRegistry.sol";
 import {ReserveManager} from "./ReserveManager.sol";
 import {Roles} from "./libraries/Roles.sol";
@@ -36,6 +37,7 @@ contract SwapEscrow is
     }
 
     DGENFT public nft;
+    GemRegistry public registry;
     PaymentTokenRegistry public paymentRegistry;
     ReserveManager public reserveManager;
     uint256 private _nextOfferId;
@@ -64,12 +66,13 @@ contract SwapEscrow is
     function initialize(
         address admin,
         DGENFT nft_,
+        GemRegistry registry_,
         PaymentTokenRegistry paymentRegistry_,
         ReserveManager reserveManager_
     ) external initializer {
         if (
-            admin == address(0) || address(nft_) == address(0) || address(paymentRegistry_) == address(0)
-                || address(reserveManager_) == address(0)
+            admin == address(0) || address(nft_) == address(0) || address(registry_) == address(0)
+                || address(paymentRegistry_) == address(0) || address(reserveManager_) == address(0)
         ) {
             revert InvalidAddress();
         }
@@ -80,6 +83,7 @@ contract SwapEscrow is
         _grantRole(Roles.UPGRADER_ROLE, admin);
 
         nft = nft_;
+        registry = registry_;
         paymentRegistry = paymentRegistry_;
         reserveManager = reserveManager_;
         _nextOfferId = 1;
@@ -98,7 +102,8 @@ contract SwapEscrow is
             paymentRegistry.quoteTokenToUsd(cashAsset, cashAmount);
         }
         uint256 requestedGemId = nft.tokenGem(requestedTokenId);
-        reserveManager.requireFunded(requestedGemId, 0);
+        GemRegistry.Gem memory requestedGem = registry.getGem(requestedGemId);
+        reserveManager.requireFunded(requestedGemId, requestedGem.priceUsd);
 
         offerId = _nextOfferId++;
         nft.safeTransferFrom(msg.sender, address(this), offeredTokenId);
@@ -144,7 +149,11 @@ contract SwapEscrow is
         if (block.timestamp > offer.expiry) revert Expired();
         delete offers[offerId];
         uint256 offeredGemId = nft.tokenGem(offer.offeredTokenId);
-        reserveManager.requireFunded(offeredGemId, 0);
+        uint256 requestedGemId = nft.tokenGem(offer.requestedTokenId);
+        GemRegistry.Gem memory offeredGem = registry.getGem(offeredGemId);
+        GemRegistry.Gem memory requestedGem = registry.getGem(requestedGemId);
+        reserveManager.requireFunded(offeredGemId, offeredGem.priceUsd);
+        reserveManager.requireFunded(requestedGemId, requestedGem.priceUsd);
 
         nft.safeTransferFrom(msg.sender, offer.proposer, offer.requestedTokenId);
         nft.safeTransferFrom(address(this), msg.sender, offer.offeredTokenId);

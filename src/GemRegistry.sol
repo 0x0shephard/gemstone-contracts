@@ -49,6 +49,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     error InvalidStatus(GemStatus current);
     error SellerNotApproved();
     error InvalidPrice();
+    error NotGemCustodian();
 
     function initialize(address admin) external initializer {
         if (admin == address(0)) revert InvalidAddress();
@@ -97,6 +98,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     function confirmCustody(uint256 gemId) external whenNotPaused onlyRole(Roles.CUSTODIAN_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.Registered) revert InvalidStatus(gem.status);
+        if (msg.sender != gem.custodian) revert NotGemCustodian();
         gem.status = GemStatus.CustodyConfirmed;
         emit CustodyConfirmed(gemId);
     }

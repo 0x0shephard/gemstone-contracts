@@ -1,66 +1,84 @@
-## Foundry
+# Digital Carat Smart Contracts
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Foundry implementation of the Digital Carat gemstone-backed NFT protocol.
 
-Foundry consists of:
+## Overview
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+The protocol mints DGE NFTs, ERC-721 tokens representing claims over specific verified gemstones. Minting is gated by seller approval, recorded custodian confirmation, verifier approval, listing approval, payment, and reserve funding.
 
-## Documentation
+Core modules:
 
-https://book.getfoundry.sh/
+- `DGENFT`
+- `GemRegistry`
+- `PaymentTokenRegistry`
+- `ReserveManager`
+- `Treasury`
+- `PrimarySaleAuction`
+- `Marketplace`
+- `SwapEscrow`
+- `RedemptionManager`
 
-## Usage
+See [docs/current-smart-contract-architecture.md](docs/current-smart-contract-architecture.md) for the current architecture.
 
-### Build
+## Build And Test
 
-```shell
-$ forge build
+```sh
+forge fmt --check
+forge build --sizes
+forge test --offline -vvv
 ```
 
-### Test
+`forge test --offline` is used in this local macOS sandbox because non-offline Forge can crash while initializing online signature lookup.
 
-```shell
-$ forge test
+## Deployment
+
+Deploy ERC1967 proxies and configure initial payment/reserve policy:
+
+```sh
+forge script script/DeployDigitalCarat.s.sol:DeployDigitalCarat \
+  --rpc-url "$RPC_URL" \
+  --broadcast
 ```
 
-### Format
+Required env vars:
 
-```shell
-$ forge fmt
+```sh
+PRIVATE_KEY=
+ETH_USD_FEED=
+PRICE_STALE_AFTER=86400
+DEFAULT_RESERVE_BPS=500
+RESERVE_BRACKET_MAX_USD=1000000000000000000000,115792089237316195423570985008687907853269984665640564039457584007913129639935
+RESERVE_BRACKET_BPS=1000,400
 ```
 
-### Gas Snapshots
+Optional env vars:
 
-```shell
-$ forge snapshot
+```sh
+PLATFORM_RECIPIENT=
+VAULT_RESERVE_RECIPIENT=
+INSURANCE_RESERVE_RECIPIENT=
+TREASURY_RESERVE_RECIPIENT=
+PAYMENT_TOKENS=0xToken1,0xToken2
+PAYMENT_TOKEN_USD_FEEDS=0xFeed1,0xFeed2
 ```
 
-### Anvil
+Notes:
 
-```shell
-$ anvil
-```
+- Native ETH is configured from `ETH_USD_FEED`.
+- ERC-20 payment tokens are configured from the optional comma-separated token/feed lists.
+- Reserve bracket values are 18-decimal USD values.
+- Bracket minimums are inferred from zero and the previous bracket max.
+- Recipient env vars default to the deployer if omitted.
 
-### Deploy
+## Dependency Policy
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+Compiler and optimizer settings are pinned in `foundry.toml`.
 
-### Cast
+Dependencies are vendored under `lib/`:
 
-```shell
-$ cast <subcommand>
-```
+- `forge-std`
+- `openzeppelin-contracts`
+- `openzeppelin-contracts-upgradeable`
+- `chainlink-brownie-contracts`
 
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+When updating dependencies, update the vendored library directories and rerun the full check suite.

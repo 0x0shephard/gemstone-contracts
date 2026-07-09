@@ -15,20 +15,29 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     uint16 public constant BPS_DENOMINATOR = 10_000;
 
+    struct ReserveBracket {
+        uint256 minPriceUsd;
+        uint256 maxPriceUsd;
+        uint16 reserveBps;
+    }
+
     PaymentTokenRegistry public paymentRegistry;
     uint16 public defaultReserveBps;
+    ReserveBracket[] private _reserveBrackets;
 
     mapping(uint256 gemId => uint256 usdAmount) public minimumReserveUsd;
     mapping(uint256 gemId => uint256 usdAmount) public reserveBalanceUsd;
     mapping(uint256 gemId => mapping(address asset => uint256 amount)) public reserveAssetBalance;
 
     event DefaultReserveBpsUpdated(uint16 reserveBps);
+    event ReserveBracketsUpdated();
     event MinimumReserveUpdated(uint256 indexed gemId, uint256 minimumReserveUsd);
     event ReserveFunded(uint256 indexed gemId, address indexed asset, uint256 amount, uint256 usdValue);
     event ReserveConsumed(uint256 indexed gemId, uint256 usdValue);
 
     error InvalidAddress();
     error InvalidAmount();
+    error InvalidReserveBracket();
     error InvalidReserveBps();
     error ReserveShortfall(uint256 requiredUsd, uint256 balanceUsd);
 
@@ -53,6 +62,33 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     function setMinimumReserveUsd(uint256 gemId, uint256 minimumReserveUsd_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         minimumReserveUsd[gemId] = minimumReserveUsd_;
         emit MinimumReserveUpdated(gemId, minimumReserveUsd_);
+    }
+
+    function setReserveBrackets(ReserveBracket[] calldata brackets) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        delete _reserveBrackets;
+
+        uint256 previousMax;
+        for (uint256 i = 0; i < brackets.length; i++) {
+            ReserveBracket calldata bracket = brackets[i];
+            if (
+                bracket.minPriceUsd != previousMax || bracket.maxPriceUsd <= bracket.minPriceUsd
+                    || bracket.reserveBps > BPS_DENOMINATOR
+            ) {
+                revert InvalidReserveBracket();
+            }
+            _reserveBrackets.push(bracket);
+            previousMax = bracket.maxPriceUsd;
+        }
+
+        emit ReserveBracketsUpdated();
+    }
+
+    function reserveBracketCount() external view returns (uint256) {
+        return _reserveBrackets.length;
+    }
+
+    function reserveBracket(uint256 index) external view returns (ReserveBracket memory) {
+        return _reserveBrackets[index];
     }
 
     function fundNative(uint256 gemId) external payable whenNotPaused {
@@ -96,9 +132,19 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     }
 
     function requiredReserveUsd(uint256 gemId, uint256 referenceValueUsd) public view returns (uint256 requiredUsd) {
-        uint256 percentReserve = (referenceValueUsd * defaultReserveBps) / BPS_DENOMINATOR;
+        uint256 percentReserve = (referenceValueUsd * reserveBpsFor(referenceValueUsd)) / BPS_DENOMINATOR;
         uint256 minimumReserve = minimumReserveUsd[gemId];
         requiredUsd = percentReserve > minimumReserve ? percentReserve : minimumReserve;
+    }
+
+    function reserveBpsFor(uint256 referenceValueUsd) public view returns (uint16) {
+        for (uint256 i = 0; i < _reserveBrackets.length; i++) {
+            ReserveBracket memory bracket = _reserveBrackets[i];
+            if (referenceValueUsd >= bracket.minPriceUsd && referenceValueUsd < bracket.maxPriceUsd) {
+                return bracket.reserveBps;
+            }
+        }
+        return defaultReserveBps;
     }
 
     function shortfallUsd(uint256 gemId, uint256 referenceValueUsd) public view returns (uint256) {

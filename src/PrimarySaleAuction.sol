@@ -44,6 +44,7 @@ contract PrimarySaleAuction is
     Treasury public treasury;
 
     mapping(uint256 gemId => Auction) public auctions;
+    mapping(address account => mapping(address asset => uint256 amount)) public pendingRefunds;
 
     event BuyNow(
         uint256 indexed gemId,
@@ -61,6 +62,8 @@ contract PrimarySaleAuction is
         uint256 indexed gemId, uint256 indexed tokenId, address indexed winner, address paymentAsset, uint256 amount
     );
     event AuctionCancelled(uint256 indexed gemId);
+    event RefundCredited(address indexed account, address indexed asset, uint256 amount);
+    event RefundClaimed(address indexed account, address indexed asset, uint256 amount);
 
     error InvalidAddress();
     error InvalidAmount();
@@ -178,7 +181,7 @@ contract PrimarySaleAuction is
         auction.reserveUsd = reserveUsd;
 
         if (previousBidder != address(0)) {
-            _refund(previousBidder, previousAsset, previousAmount);
+            _creditRefund(previousBidder, previousAsset, previousAmount);
         }
 
         emit BidPlaced(gemId, msg.sender, paymentAsset, received, saleUsd);
@@ -211,17 +214,23 @@ contract PrimarySaleAuction is
     function cancelAuction(uint256 gemId) external nonReentrant onlyRole(Roles.LISTER_ROLE) {
         Auction storage auction = auctions[gemId];
         if (!auction.exists || auction.settled) revert InvalidAuction();
-        if (block.timestamp < auction.endTime && auction.highestBidder != address(0)) revert AuctionActive();
+        if (auction.highestBidder != address(0)) revert AuctionActive();
 
         address bidder = auction.highestBidder;
         address asset = auction.paymentAsset;
         uint256 amount = auction.amount;
         delete auctions[gemId];
 
-        if (bidder != address(0)) {
-            _refund(bidder, asset, amount);
-        }
+        if (bidder != address(0)) _creditRefund(bidder, asset, amount);
         emit AuctionCancelled(gemId);
+    }
+
+    function claimRefund(address asset) external nonReentrant {
+        uint256 amount = pendingRefunds[msg.sender][asset];
+        if (amount == 0) revert InvalidAmount();
+        pendingRefunds[msg.sender][asset] = 0;
+        _refund(msg.sender, asset, amount);
+        emit RefundClaimed(msg.sender, asset, amount);
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -285,6 +294,12 @@ contract PrimarySaleAuction is
             return;
         }
         IERC20(paymentAsset).safeTransfer(to, amount);
+    }
+
+    function _creditRefund(address to, address paymentAsset, uint256 amount) private {
+        if (amount == 0) return;
+        pendingRefunds[to][paymentAsset] += amount;
+        emit RefundCredited(to, paymentAsset, amount);
     }
 
     receive() external payable {}
