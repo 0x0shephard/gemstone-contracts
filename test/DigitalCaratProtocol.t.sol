@@ -1,94 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
-import {DGENFT} from "../src/DGENFT.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
+import {DGENFT} from "../src/DGENFT.sol";
 import {Marketplace} from "../src/Marketplace.sol";
-import {PaymentTokenRegistry} from "../src/PaymentTokenRegistry.sol";
 import {PrimarySaleAuction} from "../src/PrimarySaleAuction.sol";
-import {RedemptionManager} from "../src/RedemptionManager.sol";
 import {ReserveManager} from "../src/ReserveManager.sol";
-import {SwapEscrow} from "../src/SwapEscrow.sol";
-import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
-import {MockV3Aggregator} from "./mocks/MockV3Aggregator.sol";
-import {FeeOnTransferERC20, MockERC20} from "./mocks/MockERC20.sol";
+import {BaseTest} from "./BaseTest.t.sol";
 
-contract DigitalCaratProtocolTest is Test {
-    DGENFT private nft;
-    GemRegistry private registry;
-    PaymentTokenRegistry private payments;
-    Treasury private treasury;
-    ReserveManager private reserveManager;
-    PrimarySaleAuction private sale;
-    RedemptionManager private redemption;
-    Marketplace private marketplace;
-    SwapEscrow private swapEscrow;
-
-    MockV3Aggregator private ethFeed;
-    MockV3Aggregator private usdFeed;
-    MockERC20 private usdc;
-    FeeOnTransferERC20 private feeToken;
-
-    address private seller = address(0x100);
-    address private buyer = address(0x200);
-    address private bidder = address(0x300);
-    address private custodian = address(0x350);
-    address private platform = address(0x400);
-    address private vaultReserve = address(0x500);
-    address private insuranceReserve = address(0x600);
-    address private treasuryReserve = address(0x700);
-    address private feeCollector = address(0x800);
-
-    function setUp() public {
-        nft = new DGENFT();
-        registry = new GemRegistry();
-        payments = new PaymentTokenRegistry();
-        treasury = new Treasury();
-        reserveManager = new ReserveManager();
-        sale = new PrimarySaleAuction();
-        redemption = new RedemptionManager();
-        marketplace = new Marketplace();
-        swapEscrow = new SwapEscrow();
-
-        nft.initialize(address(this), "Digital Carat Gem", "DGE");
-        registry.initialize(address(this));
-        payments.initialize(address(this));
-        reserveManager.initialize(address(this), payments);
-        treasury.initialize(address(this), platform, vaultReserve, insuranceReserve, treasuryReserve);
-        sale.initialize(address(this), nft, registry, payments, reserveManager, treasury);
-        redemption.initialize(address(this), nft, registry, reserveManager);
-        marketplace.initialize(address(this), nft, payments, reserveManager, treasury);
-        swapEscrow.initialize(address(this), nft, registry, payments, reserveManager);
-
-        nft.grantRole(Roles.MINTER_ROLE, address(sale));
-        nft.grantRole(Roles.BURNER_ROLE, address(redemption));
-        nft.grantRole(Roles.LOCKER_ROLE, address(redemption));
-        registry.grantRole(Roles.MINTER_ROLE, address(sale));
-        registry.grantRole(Roles.REDEEMER_ROLE, address(redemption));
-        registry.grantRole(Roles.CUSTODIAN_ROLE, custodian);
-        treasury.grantRole(Roles.SETTLER_ROLE, address(sale));
-        treasury.grantRole(Roles.SETTLER_ROLE, address(marketplace));
-        reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(sale));
-        reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(marketplace));
-
-        ethFeed = new MockV3Aggregator(8, 2_000e8);
-        usdFeed = new MockV3Aggregator(8, 1e8);
-        payments.setToken(address(0), address(ethFeed), 1 days, true);
-
-        usdc = new MockERC20("USD Coin", "USDC", 6);
-        feeToken = new FeeOnTransferERC20(1_000, feeCollector);
-        payments.setToken(address(usdc), address(usdFeed), 1 days, true);
-        payments.setToken(address(feeToken), address(usdFeed), 1 days, true);
-
-        vm.deal(buyer, 100 ether);
-        vm.deal(bidder, 100 ether);
-        usdc.mint(buyer, 1_000_000e6);
-        usdc.mint(bidder, 1_000_000e6);
-        feeToken.mint(buyer, 1_000_000e18);
-    }
-
+contract DigitalCaratProtocolTest is BaseTest {
     function testBuyNowRequiresMintingGates() public {
         uint256 gemId = registry.registerGem(seller, custodian, "ipfs://gem-1", keccak256("cert-1"));
 
@@ -405,15 +326,6 @@ contract DigitalCaratProtocolTest is Test {
 
         vm.prank(custodian);
         registry.confirmCustody(gemId);
-    }
-
-    function _listedGem(uint256 priceUsd, string memory uri) private returns (uint256 gemId) {
-        registry.setSellerApproval(seller, true);
-        gemId = registry.registerGem(seller, custodian, uri, keccak256(bytes(uri)));
-        vm.prank(custodian);
-        registry.confirmCustody(gemId);
-        registry.verifyGem(gemId);
-        registry.listGem(gemId, priceUsd);
     }
 }
 

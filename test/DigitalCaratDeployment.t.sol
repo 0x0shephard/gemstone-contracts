@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DGENFT} from "../src/DGENFT.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
@@ -13,18 +12,10 @@ import {ReserveManager} from "../src/ReserveManager.sol";
 import {SwapEscrow} from "../src/SwapEscrow.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
+import {BaseTest} from "./BaseTest.t.sol";
 import {MockV3Aggregator} from "./mocks/MockV3Aggregator.sol";
 
-contract DigitalCaratDeploymentTest is Test {
-    address private admin = address(this);
-    address private seller = address(0x100);
-    address private buyer = address(0x200);
-    address private custodian = address(0x300);
-    address private platform = address(0x400);
-    address private vaultReserve = address(0x500);
-    address private insuranceReserve = address(0x600);
-    address private treasuryReserve = address(0x700);
-
+contract DigitalCaratDeploymentTest is BaseTest {
     function testProxyDeploymentWiringAndConfiguredBuyNow() public {
         DGENFT nft = DGENFT(
             address(
