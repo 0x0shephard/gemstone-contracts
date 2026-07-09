@@ -8,6 +8,7 @@ import {Marketplace} from "../src/Marketplace.sol";
 import {PaymentTokenRegistry} from "../src/PaymentTokenRegistry.sol";
 import {PrimarySaleAuction} from "../src/PrimarySaleAuction.sol";
 import {RedemptionManager} from "../src/RedemptionManager.sol";
+import {ReserveManager} from "../src/ReserveManager.sol";
 import {SwapEscrow} from "../src/SwapEscrow.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
@@ -19,6 +20,7 @@ contract DigitalCaratProtocolTest is Test {
     GemRegistry private registry;
     PaymentTokenRegistry private payments;
     Treasury private treasury;
+    ReserveManager private reserveManager;
     PrimarySaleAuction private sale;
     RedemptionManager private redemption;
     Marketplace private marketplace;
@@ -43,6 +45,7 @@ contract DigitalCaratProtocolTest is Test {
         registry = new GemRegistry();
         payments = new PaymentTokenRegistry();
         treasury = new Treasury();
+        reserveManager = new ReserveManager();
         sale = new PrimarySaleAuction();
         redemption = new RedemptionManager();
         marketplace = new Marketplace();
@@ -51,11 +54,12 @@ contract DigitalCaratProtocolTest is Test {
         nft.initialize(address(this), "Digital Carat Gem", "DGE");
         registry.initialize(address(this));
         payments.initialize(address(this));
+        reserveManager.initialize(address(this), payments);
         treasury.initialize(address(this), platform, vaultReserve, insuranceReserve, treasuryReserve);
-        sale.initialize(address(this), nft, registry, payments, treasury);
-        redemption.initialize(address(this), nft, registry);
-        marketplace.initialize(address(this), nft, payments, treasury);
-        swapEscrow.initialize(address(this), nft, payments);
+        sale.initialize(address(this), nft, registry, payments, reserveManager, treasury);
+        redemption.initialize(address(this), nft, registry, reserveManager);
+        marketplace.initialize(address(this), nft, payments, reserveManager, treasury);
+        swapEscrow.initialize(address(this), nft, payments, reserveManager);
 
         nft.grantRole(Roles.MINTER_ROLE, address(sale));
         nft.grantRole(Roles.BURNER_ROLE, address(redemption));
@@ -64,6 +68,8 @@ contract DigitalCaratProtocolTest is Test {
         registry.grantRole(Roles.REDEEMER_ROLE, address(redemption));
         treasury.grantRole(Roles.SETTLER_ROLE, address(sale));
         treasury.grantRole(Roles.SETTLER_ROLE, address(marketplace));
+        reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(sale));
+        reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(marketplace));
 
         ethFeed = new MockV3Aggregator(8, 2_000e8);
         usdFeed = new MockV3Aggregator(8, 1e8);
@@ -122,6 +128,24 @@ contract DigitalCaratProtocolTest is Test {
         assertGt(feeToken.balanceOf(feeCollector), 0);
     }
 
+    function testBuyNowRequiresAndFundsReserveShortfall() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-reserve");
+        reserveManager.setMinimumReserveUsd(gemId, 100e18);
+
+        vm.prank(buyer);
+        vm.expectRevert(PrimarySaleAuction.BidTooLow.selector);
+        sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        uint256 sellerBefore = seller.balance;
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.55 ether}(gemId, address(0), 0.55 ether);
+
+        assertEq(nft.ownerOf(tokenId), buyer);
+        assertEq(seller.balance - sellerBefore, 0.4 ether);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.reserveAssetBalance(gemId, address(0)), 0.05 ether);
+    }
+
     function testAuctionRefundsPreviousBidAndSettles() public {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
@@ -161,6 +185,26 @@ contract DigitalCaratProtocolTest is Test {
         assertEq(uint256(gem.status), uint256(GemRegistry.GemStatus.Redeemed));
     }
 
+    function testRedemptionRequiresReserveFunding() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-redeem-reserve");
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        reserveManager.setMinimumReserveUsd(gemId, 100e18);
+
+        vm.prank(buyer);
+        vm.expectRevert();
+        redemption.requestRedemption(tokenId, keccak256("pickup"));
+
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 0.05 ether}(gemId);
+
+        vm.prank(buyer);
+        redemption.requestRedemption(tokenId, keccak256("pickup"));
+
+        assertTrue(nft.transferLocked(tokenId));
+    }
+
     function testMarketplaceEscrowsAndSellsDgeNft() public {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market");
         vm.prank(buyer);
@@ -183,6 +227,29 @@ contract DigitalCaratProtocolTest is Test {
         assertEq(usdc.balanceOf(vaultReserve), 60e6);
         assertEq(usdc.balanceOf(insuranceReserve), 40e6);
         assertEq(usdc.balanceOf(treasuryReserve), 20e6);
+    }
+
+    function testMarketplaceBuyerFundsReserveShortfall() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market-reserve");
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        reserveManager.setMinimumReserveUsd(gemId, 100e18);
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_000e18);
+        vm.stopPrank();
+
+        vm.startPrank(bidder);
+        usdc.approve(address(marketplace), 1_100e6);
+        vm.expectRevert(Marketplace.PriceNotMet.selector);
+        marketplace.buy(tokenId, address(usdc), 1_000e6);
+        marketplace.buy(tokenId, address(usdc), 1_100e6);
+        vm.stopPrank();
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.reserveAssetBalance(gemId, address(usdc)), 100e6);
     }
 
     function testSwapEscrowSwapsDgeOnly() public {

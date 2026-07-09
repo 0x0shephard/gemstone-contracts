@@ -11,6 +11,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {DGENFT} from "./DGENFT.sol";
 import {PaymentTokenRegistry} from "./PaymentTokenRegistry.sol";
+import {ReserveManager} from "./ReserveManager.sol";
 import {Treasury} from "./Treasury.sol";
 import {Roles} from "./libraries/Roles.sol";
 
@@ -31,6 +32,7 @@ contract Marketplace is
 
     DGENFT public nft;
     PaymentTokenRegistry public paymentRegistry;
+    ReserveManager public reserveManager;
     Treasury public treasury;
     mapping(uint256 tokenId => Listing) public listings;
 
@@ -47,13 +49,16 @@ contract Marketplace is
     error PriceNotMet();
     error InvalidAmount();
 
-    function initialize(address admin, DGENFT nft_, PaymentTokenRegistry paymentRegistry_, Treasury treasury_)
-        external
-        initializer
-    {
+    function initialize(
+        address admin,
+        DGENFT nft_,
+        PaymentTokenRegistry paymentRegistry_,
+        ReserveManager reserveManager_,
+        Treasury treasury_
+    ) external initializer {
         if (
             admin == address(0) || address(nft_) == address(0) || address(paymentRegistry_) == address(0)
-                || address(treasury_) == address(0)
+                || address(reserveManager_) == address(0) || address(treasury_) == address(0)
         ) {
             revert InvalidAddress();
         }
@@ -65,6 +70,7 @@ contract Marketplace is
 
         nft = nft_;
         paymentRegistry = paymentRegistry_;
+        reserveManager = reserveManager_;
         treasury = treasury_;
     }
 
@@ -91,9 +97,17 @@ contract Marketplace is
 
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
-        if (usdValue < listing.priceUsd) revert PriceNotMet();
+        uint256 gemId = nft.tokenGem(tokenId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, listing.priceUsd);
+        if (usdValue < listing.priceUsd + reserveUsd) revert PriceNotMet();
+        uint256 saleAmount = _proRataAmount(received, listing.priceUsd, usdValue);
+        uint256 reserveAmount = received - saleAmount;
+        if (reserveAmount != 0) {
+            _fundReserve(gemId, paymentAsset, reserveAmount);
+            reserveManager.requireFunded(gemId, listing.priceUsd);
+        }
 
-        _settle(paymentAsset, listing.seller, received);
+        _settle(paymentAsset, listing.seller, saleAmount);
         nft.safeTransferFrom(address(this), msg.sender, tokenId);
         emit Purchased(tokenId, msg.sender, paymentAsset, received, usdValue);
     }
@@ -125,6 +139,7 @@ contract Marketplace is
     }
 
     function _settle(address paymentAsset, address seller, uint256 amount) private {
+        if (amount == 0) return;
         if (paymentAsset == address(0)) {
             treasury.settleNative{value: amount}(seller);
             return;
@@ -134,6 +149,25 @@ contract Marketplace is
         IERC20(paymentAsset).safeTransfer(address(treasury), amount);
         uint256 receivedByTreasury = IERC20(paymentAsset).balanceOf(address(treasury)) - beforeBalance;
         treasury.settleToken(paymentAsset, seller, receivedByTreasury);
+    }
+
+    function _fundReserve(uint256 gemId, address paymentAsset, uint256 amount) private {
+        if (paymentAsset == address(0)) {
+            uint256 nativeUsdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, amount);
+            reserveManager.recordModuleFunding{value: amount}(gemId, paymentAsset, amount, nativeUsdValue);
+            return;
+        }
+
+        uint256 beforeBalance = IERC20(paymentAsset).balanceOf(address(reserveManager));
+        IERC20(paymentAsset).safeTransfer(address(reserveManager), amount);
+        uint256 receivedByReserve = IERC20(paymentAsset).balanceOf(address(reserveManager)) - beforeBalance;
+        uint256 tokenUsdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, receivedByReserve);
+        reserveManager.recordModuleFunding(gemId, paymentAsset, receivedByReserve, tokenUsdValue);
+    }
+
+    function _proRataAmount(uint256 amount, uint256 shareUsd, uint256 totalUsd) private pure returns (uint256) {
+        if (shareUsd == 0) return 0;
+        return (amount * shareUsd) / totalUsd;
     }
 
     receive() external payable {}

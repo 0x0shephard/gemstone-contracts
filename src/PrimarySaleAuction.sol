@@ -11,6 +11,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {DGENFT} from "./DGENFT.sol";
 import {GemRegistry} from "./GemRegistry.sol";
 import {PaymentTokenRegistry} from "./PaymentTokenRegistry.sol";
+import {ReserveManager} from "./ReserveManager.sol";
 import {Treasury} from "./Treasury.sol";
 import {Roles} from "./libraries/Roles.sol";
 
@@ -33,11 +34,13 @@ contract PrimarySaleAuction is
         address paymentAsset;
         uint256 amount;
         uint256 usdValue;
+        uint256 reserveUsd;
     }
 
     DGENFT public nft;
     GemRegistry public registry;
     PaymentTokenRegistry public paymentRegistry;
+    ReserveManager public reserveManager;
     Treasury public treasury;
 
     mapping(uint256 gemId => Auction) public auctions;
@@ -74,11 +77,13 @@ contract PrimarySaleAuction is
         DGENFT nft_,
         GemRegistry registry_,
         PaymentTokenRegistry paymentRegistry_,
+        ReserveManager reserveManager_,
         Treasury treasury_
     ) external initializer {
         if (
             admin == address(0) || address(nft_) == address(0) || address(registry_) == address(0)
-                || address(paymentRegistry_) == address(0) || address(treasury_) == address(0)
+                || address(paymentRegistry_) == address(0) || address(reserveManager_) == address(0)
+                || address(treasury_) == address(0)
         ) revert InvalidAddress();
 
         __AccessControl_init();
@@ -91,6 +96,7 @@ contract PrimarySaleAuction is
         nft = nft_;
         registry = registry_;
         paymentRegistry = paymentRegistry_;
+        reserveManager = reserveManager_;
         treasury = treasury_;
     }
 
@@ -106,11 +112,18 @@ contract PrimarySaleAuction is
 
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
-        if (usdValue < gem.priceUsd) revert BidTooLow();
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
+        if (usdValue < gem.priceUsd + reserveUsd) revert BidTooLow();
+        uint256 saleAmount = _proRataAmount(received, gem.priceUsd, usdValue);
+        uint256 reserveAmount = received - saleAmount;
+        if (reserveAmount != 0) {
+            _fundReserve(gemId, paymentAsset, reserveAmount);
+            reserveManager.requireFunded(gemId, gem.priceUsd);
+        }
 
         tokenId = nft.mintTo(msg.sender, gemId, gem.metadataURI);
         registry.markMinted(gemId, tokenId);
-        _settle(paymentAsset, gem.seller, received);
+        _settle(paymentAsset, gem.seller, saleAmount);
 
         emit BuyNow(gemId, tokenId, msg.sender, paymentAsset, received, usdValue);
     }
@@ -134,7 +147,8 @@ contract PrimarySaleAuction is
             highestBidder: address(0),
             paymentAsset: address(0),
             amount: 0,
-            usdValue: 0
+            usdValue: 0,
+            reserveUsd: 0
         });
 
         emit AuctionCreated(gemId, floorUsd, startTime, endTime);
@@ -148,7 +162,10 @@ contract PrimarySaleAuction is
 
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
-        if (usdValue < auction.floorUsd || usdValue <= auction.usdValue) revert BidTooLow();
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, auction.floorUsd);
+        if (usdValue < auction.floorUsd + reserveUsd) revert BidTooLow();
+        uint256 saleUsd = usdValue - reserveUsd;
+        if (saleUsd <= auction.usdValue) revert BidTooLow();
 
         address previousBidder = auction.highestBidder;
         address previousAsset = auction.paymentAsset;
@@ -157,13 +174,14 @@ contract PrimarySaleAuction is
         auction.highestBidder = msg.sender;
         auction.paymentAsset = paymentAsset;
         auction.amount = received;
-        auction.usdValue = usdValue;
+        auction.usdValue = saleUsd;
+        auction.reserveUsd = reserveUsd;
 
         if (previousBidder != address(0)) {
             _refund(previousBidder, previousAsset, previousAmount);
         }
 
-        emit BidPlaced(gemId, msg.sender, paymentAsset, received, usdValue);
+        emit BidPlaced(gemId, msg.sender, paymentAsset, received, saleUsd);
     }
 
     function settleAuction(uint256 gemId) external nonReentrant whenNotPaused returns (uint256 tokenId) {
@@ -175,10 +193,17 @@ contract PrimarySaleAuction is
 
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         auction.settled = true;
+        uint256 totalUsd = auction.usdValue + auction.reserveUsd;
+        uint256 saleAmount = _proRataAmount(auction.amount, auction.usdValue, totalUsd);
+        uint256 reserveAmount = auction.amount - saleAmount;
+        if (reserveAmount != 0) {
+            _fundReserve(gemId, auction.paymentAsset, reserveAmount);
+            reserveManager.requireFunded(gemId, auction.floorUsd);
+        }
 
         tokenId = nft.mintTo(auction.highestBidder, gemId, gem.metadataURI);
         registry.markMinted(gemId, tokenId);
-        _settle(auction.paymentAsset, gem.seller, auction.amount);
+        _settle(auction.paymentAsset, gem.seller, saleAmount);
 
         emit AuctionSettled(gemId, tokenId, auction.highestBidder, auction.paymentAsset, auction.amount);
     }
@@ -221,6 +246,7 @@ contract PrimarySaleAuction is
     }
 
     function _settle(address paymentAsset, address seller, uint256 amount) private {
+        if (amount == 0) return;
         if (paymentAsset == address(0)) {
             treasury.settleNative{value: amount}(seller);
             return;
@@ -230,6 +256,25 @@ contract PrimarySaleAuction is
         IERC20(paymentAsset).safeTransfer(address(treasury), amount);
         uint256 receivedByTreasury = IERC20(paymentAsset).balanceOf(address(treasury)) - beforeBalance;
         treasury.settleToken(paymentAsset, seller, receivedByTreasury);
+    }
+
+    function _fundReserve(uint256 gemId, address paymentAsset, uint256 amount) private {
+        if (paymentAsset == address(0)) {
+            uint256 nativeUsdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, amount);
+            reserveManager.recordModuleFunding{value: amount}(gemId, paymentAsset, amount, nativeUsdValue);
+            return;
+        }
+
+        uint256 beforeBalance = IERC20(paymentAsset).balanceOf(address(reserveManager));
+        IERC20(paymentAsset).safeTransfer(address(reserveManager), amount);
+        uint256 receivedByReserve = IERC20(paymentAsset).balanceOf(address(reserveManager)) - beforeBalance;
+        uint256 tokenUsdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, receivedByReserve);
+        reserveManager.recordModuleFunding(gemId, paymentAsset, receivedByReserve, tokenUsdValue);
+    }
+
+    function _proRataAmount(uint256 amount, uint256 shareUsd, uint256 totalUsd) private pure returns (uint256) {
+        if (shareUsd == 0) return 0;
+        return (amount * shareUsd) / totalUsd;
     }
 
     function _refund(address to, address paymentAsset, uint256 amount) private {

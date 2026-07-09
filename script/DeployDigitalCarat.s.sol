@@ -9,6 +9,7 @@ import {Marketplace} from "../src/Marketplace.sol";
 import {PaymentTokenRegistry} from "../src/PaymentTokenRegistry.sol";
 import {PrimarySaleAuction} from "../src/PrimarySaleAuction.sol";
 import {RedemptionManager} from "../src/RedemptionManager.sol";
+import {ReserveManager} from "../src/ReserveManager.sol";
 import {SwapEscrow} from "../src/SwapEscrow.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
@@ -18,6 +19,7 @@ contract DeployDigitalCarat is Script {
         DGENFT nft;
         GemRegistry registry;
         PaymentTokenRegistry payments;
+        ReserveManager reserveManager;
         Treasury treasury;
         PrimarySaleAuction sale;
         RedemptionManager redemption;
@@ -53,6 +55,14 @@ contract DeployDigitalCarat is Script {
                 )
             )
         );
+        deployment.reserveManager = ReserveManager(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(new ReserveManager()),
+                        abi.encodeCall(ReserveManager.initialize, (admin, deployment.payments))
+                    )
+                ))
+        );
         deployment.treasury = Treasury(
             payable(address(
                     new ERC1967Proxy(
@@ -76,7 +86,14 @@ contract DeployDigitalCarat is Script {
                         address(new PrimarySaleAuction()),
                         abi.encodeCall(
                             PrimarySaleAuction.initialize,
-                            (admin, deployment.nft, deployment.registry, deployment.payments, deployment.treasury)
+                            (
+                                admin,
+                                deployment.nft,
+                                deployment.registry,
+                                deployment.payments,
+                                deployment.reserveManager,
+                                deployment.treasury
+                            )
                         )
                     )
                 ))
@@ -85,7 +102,10 @@ contract DeployDigitalCarat is Script {
             address(
                 new ERC1967Proxy(
                     address(new RedemptionManager()),
-                    abi.encodeCall(RedemptionManager.initialize, (admin, deployment.nft, deployment.registry))
+                    abi.encodeCall(
+                        RedemptionManager.initialize,
+                        (admin, deployment.nft, deployment.registry, deployment.reserveManager)
+                    )
                 )
             )
         );
@@ -94,7 +114,8 @@ contract DeployDigitalCarat is Script {
                     new ERC1967Proxy(
                         address(new Marketplace()),
                         abi.encodeCall(
-                            Marketplace.initialize, (admin, deployment.nft, deployment.payments, deployment.treasury)
+                            Marketplace.initialize,
+                            (admin, deployment.nft, deployment.payments, deployment.reserveManager, deployment.treasury)
                         )
                     )
                 ))
@@ -103,7 +124,10 @@ contract DeployDigitalCarat is Script {
             payable(address(
                     new ERC1967Proxy(
                         address(new SwapEscrow()),
-                        abi.encodeCall(SwapEscrow.initialize, (admin, deployment.nft, deployment.payments))
+                        abi.encodeCall(
+                            SwapEscrow.initialize,
+                            (admin, deployment.nft, deployment.payments, deployment.reserveManager)
+                        )
                     )
                 ))
         );
@@ -115,6 +139,8 @@ contract DeployDigitalCarat is Script {
         deployment.registry.grantRole(Roles.REDEEMER_ROLE, address(deployment.redemption));
         deployment.treasury.grantRole(Roles.SETTLER_ROLE, address(deployment.sale));
         deployment.treasury.grantRole(Roles.SETTLER_ROLE, address(deployment.marketplace));
+        deployment.reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(deployment.sale));
+        deployment.reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(deployment.marketplace));
 
         vm.stopBroadcast();
     }

@@ -11,6 +11,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {DGENFT} from "./DGENFT.sol";
 import {PaymentTokenRegistry} from "./PaymentTokenRegistry.sol";
+import {ReserveManager} from "./ReserveManager.sol";
 import {Roles} from "./libraries/Roles.sol";
 
 contract SwapEscrow is
@@ -36,6 +37,7 @@ contract SwapEscrow is
 
     DGENFT public nft;
     PaymentTokenRegistry public paymentRegistry;
+    ReserveManager public reserveManager;
     uint256 private _nextOfferId;
     mapping(uint256 offerId => SwapOffer) public offers;
 
@@ -59,8 +61,16 @@ contract SwapEscrow is
     error InvalidAmount();
     error TransferFailed();
 
-    function initialize(address admin, DGENFT nft_, PaymentTokenRegistry paymentRegistry_) external initializer {
-        if (admin == address(0) || address(nft_) == address(0) || address(paymentRegistry_) == address(0)) {
+    function initialize(
+        address admin,
+        DGENFT nft_,
+        PaymentTokenRegistry paymentRegistry_,
+        ReserveManager reserveManager_
+    ) external initializer {
+        if (
+            admin == address(0) || address(nft_) == address(0) || address(paymentRegistry_) == address(0)
+                || address(reserveManager_) == address(0)
+        ) {
             revert InvalidAddress();
         }
         __AccessControl_init();
@@ -71,6 +81,7 @@ contract SwapEscrow is
 
         nft = nft_;
         paymentRegistry = paymentRegistry_;
+        reserveManager = reserveManager_;
         _nextOfferId = 1;
     }
 
@@ -86,6 +97,8 @@ contract SwapEscrow is
         if (cashAmount != 0) {
             paymentRegistry.quoteTokenToUsd(cashAsset, cashAmount);
         }
+        uint256 requestedGemId = nft.tokenGem(requestedTokenId);
+        reserveManager.requireFunded(requestedGemId, 0);
 
         offerId = _nextOfferId++;
         nft.safeTransferFrom(msg.sender, address(this), offeredTokenId);
@@ -130,6 +143,8 @@ contract SwapEscrow is
         if (!offer.active) revert InvalidOffer();
         if (block.timestamp > offer.expiry) revert Expired();
         delete offers[offerId];
+        uint256 offeredGemId = nft.tokenGem(offer.offeredTokenId);
+        reserveManager.requireFunded(offeredGemId, 0);
 
         nft.safeTransferFrom(msg.sender, offer.proposer, offer.requestedTokenId);
         nft.safeTransferFrom(address(this), msg.sender, offer.offeredTokenId);
