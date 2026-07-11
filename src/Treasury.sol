@@ -38,10 +38,18 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
     error InsufficientBalance();
     error TransferFailed();
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @dev Locks the implementation contract so only proxy instances can be initialized.
     constructor() {
         _disableInitializers();
     }
 
+    /// @notice Initializes treasury recipients, default splits, and roles.
+    /// @param admin Account receiving admin, upgrader, and settler roles.
+    /// @param platformRecipient_ Recipient for platform proceeds.
+    /// @param vaultReserveRecipient_ Recipient for vault reserve proceeds.
+    /// @param insuranceReserveRecipient_ Recipient for insurance reserve proceeds.
+    /// @param treasuryReserveRecipient_ Recipient for treasury reserve proceeds.
     function initialize(
         address admin,
         address platformRecipient_,
@@ -74,6 +82,11 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         );
     }
 
+    /// @notice Updates treasury distribution recipients.
+    /// @param platformRecipient_ New platform recipient.
+    /// @param vaultReserveRecipient_ New vault reserve recipient.
+    /// @param insuranceReserveRecipient_ New insurance reserve recipient.
+    /// @param treasuryReserveRecipient_ New treasury reserve recipient.
     function setRecipients(
         address platformRecipient_,
         address vaultReserveRecipient_,
@@ -85,15 +98,26 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         );
     }
 
+    /// @notice Updates sale proceed split percentages.
+    /// @dev Split BPS values must sum to 10,000.
+    /// @param newSplits New distribution splits.
     function setSplits(Splits calldata newSplits) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setSplits(newSplits);
     }
 
+    /// @notice Distributes native sale proceeds according to current treasury splits.
+    /// @dev Callable only by `SETTLER_ROLE`; `msg.value` is the amount distributed.
+    /// @param seller Seller recipient for seller share.
     function settleNative(address seller) external payable whenNotPaused onlyRole(Roles.SETTLER_ROLE) {
         _distributeNative(seller, msg.value);
         emit SaleSettled(address(0), seller, msg.value);
     }
 
+    /// @notice Pulls and distributes ERC-20 sale proceeds according to current treasury splits.
+    /// @dev Caller must have `SETTLER_ROLE` and approve this contract for `amount`.
+    /// @param token ERC-20 asset to settle.
+    /// @param seller Seller recipient for seller share.
+    /// @param amount Gross token amount to pull from caller.
     function settleToken(address token, address seller, uint256 amount)
         external
         whenNotPaused
@@ -109,14 +133,17 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         emit SaleSettled(token, seller, received);
     }
 
+    /// @notice Pauses treasury settlement functions.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
+    /// @notice Unpauses treasury settlement functions.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
+    /// @dev Validates and stores recipient addresses.
     function _setRecipients(
         address platformRecipient_,
         address vaultReserveRecipient_,
@@ -136,6 +163,7 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         );
     }
 
+    /// @dev Validates and stores split BPS values.
     function _setSplits(Splits memory newSplits) private {
         uint256 total = uint256(newSplits.sellerBps) + newSplits.platformBps + newSplits.vaultReserveBps
             + newSplits.insuranceReserveBps + newSplits.treasuryReserveBps;
@@ -144,10 +172,12 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         emit SplitsUpdated(newSplits);
     }
 
+    /// @dev Calculates a BPS-denominated share of `total`.
     function _amount(uint256 total, uint16 bps) private pure returns (uint256) {
         return (total * bps) / BPS_DENOMINATOR;
     }
 
+    /// @dev Distributes native proceeds to all configured recipients.
     function _distributeNative(address seller, uint256 amount) private {
         if (seller == address(0)) revert InvalidAddress();
         Splits memory s = splits;
@@ -169,6 +199,7 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         emit Distribution(address(0), treasuryReserveRecipient, treasuryAmount, treasuryAmount);
     }
 
+    /// @dev Distributes ERC-20 proceeds to all configured recipients.
     function _distributeToken(address token, address seller, uint256 amount) private {
         if (seller == address(0) || token == address(0)) revert InvalidAddress();
         Splits memory s = splits;
@@ -185,6 +216,7 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         _sendToken(token, treasuryReserveRecipient, treasuryAmount);
     }
 
+    /// @dev Sends ERC-20 tokens and emits gross/net distribution accounting.
     function _sendToken(address token, address to, uint256 amount) private {
         if (amount == 0) {
             emit Distribution(token, to, 0, 0);
@@ -196,6 +228,7 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         emit Distribution(token, to, amount, netReceived);
     }
 
+    /// @dev Sends native ETH to a recipient.
     function _sendNative(address to, uint256 amount) private {
         if (amount == 0) return;
         (bool ok,) = payable(to).call{value: amount}("");
@@ -204,5 +237,6 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
 
     receive() external payable {}
 
+    /// @dev Authorizes UUPS upgrades for `UPGRADER_ROLE` holders.
     function _authorizeUpgrade(address) internal override onlyRole(Roles.UPGRADER_ROLE) {}
 }

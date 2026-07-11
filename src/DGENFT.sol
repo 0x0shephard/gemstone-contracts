@@ -33,10 +33,16 @@ contract DGENFT is
     error GemAlreadyMinted();
     error TokenLocked();
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @dev Locks the implementation contract so only proxy instances can be initialized.
     constructor() {
         _disableInitializers();
     }
 
+    /// @notice Initializes the DGE NFT collection and grants protocol roles to `admin`.
+    /// @param admin Account that receives admin, upgrader, minter, burner, and locker roles.
+    /// @param name_ ERC-721 collection name.
+    /// @param symbol_ ERC-721 collection symbol.
     function initialize(address admin, string calldata name_, string calldata symbol_) external initializer {
         if (admin == address(0)) revert InvalidAddress();
         __ERC721_init(name_, symbol_);
@@ -52,6 +58,12 @@ contract DGENFT is
         _nextTokenId = 1;
     }
 
+    /// @notice Mints a DGE NFT for a listed gemstone.
+    /// @dev Callable only by accounts with `MINTER_ROLE`; each gem can be minted once.
+    /// @param to Recipient of the NFT.
+    /// @param gemId Gemstone identifier linked to the token.
+    /// @param uri Token metadata URI.
+    /// @return tokenId Newly minted NFT id.
     function mintTo(address to, uint256 gemId, string calldata uri)
         external
         onlyRole(Roles.MINTER_ROLE)
@@ -68,12 +80,19 @@ contract DGENFT is
         emit DgeMinted(tokenId, gemId, to, uri);
     }
 
+    /// @notice Locks or unlocks token transfers.
+    /// @dev Callable only by `LOCKER_ROLE`; used during redemption.
+    /// @param tokenId Token whose transfer lock is updated.
+    /// @param locked True to block transfers, false to allow them.
     function setTransferLocked(uint256 tokenId, bool locked) external onlyRole(Roles.LOCKER_ROLE) {
         _requireOwned(tokenId);
         transferLocked[tokenId] = locked;
         emit TransferLockUpdated(tokenId, locked);
     }
 
+    /// @notice Burns a protocol-owned redemption token and clears gem-token mappings.
+    /// @dev Callable only by `BURNER_ROLE`; intended for RedemptionManager.
+    /// @param tokenId Token to burn.
     function burnFromProtocol(uint256 tokenId) external onlyRole(Roles.BURNER_ROLE) {
         _requireOwned(tokenId);
         uint256 gemId = tokenGem[tokenId];
@@ -83,14 +102,19 @@ contract DGENFT is
         _burn(tokenId);
     }
 
+    /// @notice Sets the collection-wide ERC-2981 royalty.
+    /// @param receiver Royalty receiver.
+    /// @param feeNumerator Royalty fee numerator using OpenZeppelin's royalty denominator.
     function setDefaultRoyalty(address receiver, uint96 feeNumerator) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setDefaultRoyalty(receiver, feeNumerator);
     }
 
+    /// @notice Deletes the collection-wide ERC-2981 royalty configuration.
     function deleteDefaultRoyalty() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _deleteDefaultRoyalty();
     }
 
+    /// @dev Enforces redemption transfer locks for non-mint and non-burn transfers.
     function _update(address to, uint256 tokenId, address auth)
         internal
         override(ERC721Upgradeable)
@@ -101,6 +125,8 @@ contract DGENFT is
         return super._update(to, tokenId, auth);
     }
 
+    /// @notice Returns token metadata URI.
+    /// @param tokenId Token id to query.
     function tokenURI(uint256 tokenId)
         public
         view
@@ -110,6 +136,8 @@ contract DGENFT is
         return super.tokenURI(tokenId);
     }
 
+    /// @notice Reports interface support across ERC-721, ERC-721 URI storage, royalty, and access control.
+    /// @param interfaceId Interface id to query.
     function supportsInterface(bytes4 interfaceId)
         public
         view
@@ -119,5 +147,6 @@ contract DGENFT is
         return super.supportsInterface(interfaceId);
     }
 
+    /// @dev Authorizes UUPS upgrades for `UPGRADER_ROLE` holders.
     function _authorizeUpgrade(address) internal override onlyRole(Roles.UPGRADER_ROLE) {}
 }

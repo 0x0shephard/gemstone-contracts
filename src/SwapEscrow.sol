@@ -64,10 +64,18 @@ contract SwapEscrow is
     error TransferFailed();
     error GemNotMinted();
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @dev Locks the implementation contract so only proxy instances can be initialized.
     constructor() {
         _disableInitializers();
     }
 
+    /// @notice Initializes swap escrow dependencies and roles.
+    /// @param admin Account receiving default admin and upgrader roles.
+    /// @param nft_ DGE NFT contract.
+    /// @param registry_ Gem registry.
+    /// @param paymentRegistry_ Payment registry.
+    /// @param reserveManager_ Reserve manager.
     function initialize(
         address admin,
         DGENFT nft_,
@@ -94,6 +102,15 @@ contract SwapEscrow is
         _nextOfferId = 1;
     }
 
+    /// @notice Creates an escrowed DGE-for-DGE swap offer, optionally with a cash delta.
+    /// @dev Offered token is escrowed immediately; requested token must be a minted DGE NFT.
+    /// @param offeredTokenId Token escrowed by proposer.
+    /// @param requestedTokenId Token requested from accepter.
+    /// @param cashAsset Cash delta asset, or address(0) for native ETH.
+    /// @param cashAmount Cash delta amount.
+    /// @param proposerPaysCash True if proposer escrows/pays the cash delta.
+    /// @param expiry Offer expiry timestamp.
+    /// @return offerId Newly created swap offer id.
     function createOffer(
         uint256 offeredTokenId,
         uint256 requestedTokenId,
@@ -138,6 +155,8 @@ contract SwapEscrow is
         );
     }
 
+    /// @notice Cancels an active swap offer and returns escrowed assets to proposer.
+    /// @param offerId Swap offer id to cancel.
     function cancelOffer(uint256 offerId) external nonReentrant {
         SwapOffer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
@@ -151,6 +170,8 @@ contract SwapEscrow is
         emit OfferCancelled(offerId);
     }
 
+    /// @notice Accepts an active swap offer and exchanges NFTs and any cash delta.
+    /// @param offerId Swap offer id to accept.
     function acceptOffer(uint256 offerId) external payable nonReentrant whenNotPaused {
         SwapOffer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
@@ -183,19 +204,23 @@ contract SwapEscrow is
         emit OfferAccepted(offerId, msg.sender);
     }
 
+    /// @notice Pauses swap creation and acceptance.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
+    /// @notice Unpauses swap operations.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
+    /// @notice Accepts safe transfers only from the configured DGE NFT contract.
     function onERC721Received(address, address, uint256, bytes calldata) external view returns (bytes4) {
         if (msg.sender != address(nft)) revert InvalidAddress();
         return IERC721Receiver.onERC721Received.selector;
     }
 
+    /// @dev Collects a native or ERC-20 cash delta.
     function _collectCash(address from, address asset, uint256 amount) private {
         if (asset == address(0)) {
             if (msg.value != amount) revert InvalidAmount();
@@ -205,6 +230,7 @@ contract SwapEscrow is
         IERC20(asset).safeTransferFrom(from, address(this), amount);
     }
 
+    /// @dev Sends a native or ERC-20 cash delta.
     function _sendCash(address to, address asset, uint256 amount) private {
         if (asset == address(0)) {
             (bool ok,) = payable(to).call{value: amount}("");
@@ -214,6 +240,7 @@ contract SwapEscrow is
         IERC20(asset).safeTransfer(to, amount);
     }
 
+    /// @dev Reverts unless the gem is in minted status.
     function _requireMintedGem(uint256 gemId) private view {
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         if (gem.status != GemRegistry.GemStatus.Minted) revert GemNotMinted();
@@ -221,5 +248,6 @@ contract SwapEscrow is
 
     receive() external payable {}
 
+    /// @dev Authorizes UUPS upgrades for `UPGRADER_ROLE` holders.
     function _authorizeUpgrade(address) internal override onlyRole(Roles.UPGRADER_ROLE) {}
 }

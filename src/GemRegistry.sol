@@ -53,10 +53,14 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     error InvalidPrice();
     error NotGemCustodian();
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @dev Locks the implementation contract so only proxy instances can be initialized.
     constructor() {
         _disableInitializers();
     }
 
+    /// @notice Initializes registry roles and starts gem ids at 1.
+    /// @param admin Account receiving all registry administration roles.
     function initialize(address admin) external initializer {
         if (admin == address(0)) revert InvalidAddress();
         __AccessControl_init();
@@ -72,12 +76,23 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         _nextGemId = 1;
     }
 
+    /// @notice Updates whether a seller is approved to list gems.
+    /// @dev Callable only by `COMPLIANCE_ROLE`.
+    /// @param seller Seller address to update.
+    /// @param approved Whether the seller can list verified gems.
     function setSellerApproval(address seller, bool approved) external onlyRole(Roles.COMPLIANCE_ROLE) {
         if (seller == address(0)) revert InvalidAddress();
         sellerApproved[seller] = approved;
         emit SellerApprovalUpdated(seller, approved);
     }
 
+    /// @notice Registers a new gemstone before custody verification.
+    /// @dev Callable only by `LISTER_ROLE`.
+    /// @param seller Seller that will receive sale proceeds.
+    /// @param custodian Recorded custodian responsible for custody and redemption confirmation.
+    /// @param metadataURI Off-chain gem metadata URI.
+    /// @param certificateHash Hash of the gem certificate or custody record.
+    /// @return gemId Newly assigned gem id.
     function registerGem(address seller, address custodian, string calldata metadataURI, bytes32 certificateHash)
         external
         whenNotPaused
@@ -101,6 +116,9 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit GemRegistered(gemId, seller, custodian);
     }
 
+    /// @notice Confirms that the recorded custodian has custody of a registered gem.
+    /// @dev Caller must have `CUSTODIAN_ROLE` and be the gem's recorded custodian.
+    /// @param gemId Gem id to confirm.
     function confirmCustody(uint256 gemId) external whenNotPaused onlyRole(Roles.CUSTODIAN_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.Registered) revert InvalidStatus(gem.status);
@@ -109,6 +127,9 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit CustodyConfirmed(gemId);
     }
 
+    /// @notice Marks a custody-confirmed gem as verified.
+    /// @dev Callable only by `VERIFIER_ROLE`.
+    /// @param gemId Gem id to verify.
     function verifyGem(uint256 gemId) external whenNotPaused onlyRole(Roles.VERIFIER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.CustodyConfirmed) revert InvalidStatus(gem.status);
@@ -116,6 +137,10 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit GemVerified(gemId);
     }
 
+    /// @notice Lists a verified gem for primary sale.
+    /// @dev Seller must be approved and `priceUsd` is 18-decimal USD value.
+    /// @param gemId Gem id to list.
+    /// @param priceUsd Primary sale price in 18-decimal USD.
     function listGem(uint256 gemId, uint256 priceUsd) external whenNotPaused onlyRole(Roles.LISTER_ROLE) {
         if (priceUsd == 0) revert InvalidPrice();
         Gem storage gem = _existingGem(gemId);
@@ -126,6 +151,10 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit GemListed(gemId, priceUsd);
     }
 
+    /// @notice Records that a listed gem has been minted into an NFT.
+    /// @dev Callable only by `MINTER_ROLE`, normally PrimarySaleAuction.
+    /// @param gemId Gem id that was minted.
+    /// @param tokenId NFT id linked to the gem.
     function markMinted(uint256 gemId, uint256 tokenId) external whenNotPaused onlyRole(Roles.MINTER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.Listed) revert InvalidStatus(gem.status);
@@ -134,6 +163,10 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit GemMinted(gemId, tokenId);
     }
 
+    /// @notice Withdraws an unsold listed gem from sale.
+    /// @dev Callable only by `LISTER_ROLE`; minted gems cannot be withdrawn here.
+    /// @param gemId Listed gem id to withdraw.
+    /// @param reasonHash Off-chain reason hash for auditability.
     function withdrawListedGem(uint256 gemId, bytes32 reasonHash) external whenNotPaused onlyRole(Roles.LISTER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.Listed) revert InvalidStatus(gem.status);
@@ -141,6 +174,10 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit GemWithdrawn(gemId, reasonHash);
     }
 
+    /// @notice Moves a minted gem into redemption-requested status.
+    /// @dev Callable only by `REDEEMER_ROLE`, normally RedemptionManager.
+    /// @param gemId Gem id being redeemed.
+    /// @param requestHash Off-chain redemption request hash.
     function requestRedemption(uint256 gemId, bytes32 requestHash)
         external
         whenNotPaused
@@ -153,6 +190,9 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit RedemptionRequested(gemId, requestHash);
     }
 
+    /// @notice Cancels an open redemption and restores minted status.
+    /// @dev Callable only by `REDEEMER_ROLE`.
+    /// @param gemId Gem id whose redemption is cancelled.
     function cancelRedemption(uint256 gemId) external whenNotPaused onlyRole(Roles.REDEEMER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.RedemptionRequested) revert InvalidStatus(gem.status);
@@ -161,6 +201,9 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit RedemptionCancelled(gemId);
     }
 
+    /// @notice Marks a redemption-requested gem as redeemed.
+    /// @dev Callable only by `REDEEMER_ROLE`; clears the stored token id.
+    /// @param gemId Gem id to mark redeemed.
     function markRedeemed(uint256 gemId) external whenNotPaused onlyRole(Roles.REDEEMER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.RedemptionRequested) revert InvalidStatus(gem.status);
@@ -169,32 +212,43 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit GemRedeemed(gemId);
     }
 
+    /// @notice Pauses registry state-changing lifecycle operations.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
+    /// @notice Unpauses registry lifecycle operations.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
+    /// @notice Returns a registered gem.
+    /// @param gemId Gem id to query.
+    /// @return Gem record.
     function getGem(uint256 gemId) external view returns (Gem memory) {
         return _existingGemView(gemId);
     }
 
+    /// @notice Returns whether a gem can currently be minted in primary sale.
+    /// @param gemId Gem id to check.
+    /// @return True when listed, seller-approved, and priced.
     function canMint(uint256 gemId) external view returns (bool) {
         Gem storage gem = _existingGemView(gemId);
         return gem.status == GemStatus.Listed && sellerApproved[gem.seller] && gem.priceUsd != 0;
     }
 
+    /// @dev Returns an existing gem storage pointer or reverts.
     function _existingGem(uint256 gemId) private view returns (Gem storage gem) {
         gem = _gems[gemId];
         if (gem.status == GemStatus.None) revert InvalidGem();
     }
 
+    /// @dev View helper returning an existing gem storage pointer or reverting.
     function _existingGemView(uint256 gemId) private view returns (Gem storage gem) {
         gem = _gems[gemId];
         if (gem.status == GemStatus.None) revert InvalidGem();
     }
 
+    /// @dev Authorizes UUPS upgrades for `UPGRADER_ROLE` holders.
     function _authorizeUpgrade(address) internal override onlyRole(Roles.UPGRADER_ROLE) {}
 }

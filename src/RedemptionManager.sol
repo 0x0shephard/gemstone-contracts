@@ -35,10 +35,18 @@ contract RedemptionManager is
     error RedemptionNotAllowed();
     error NotRedemptionCanceller();
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @dev Locks the implementation contract so only proxy instances can be initialized.
     constructor() {
         _disableInitializers();
     }
 
+    /// @notice Initializes redemption dependencies and roles.
+    /// @param admin Account receiving default admin, upgrader, and redeemer roles.
+    /// @param nft_ DGE NFT contract.
+    /// @param registry_ Gem registry.
+    /// @param reserveManager_ Reserve manager.
+    /// @param complianceRegistry_ Compliance registry.
     function initialize(
         address admin,
         DGENFT nft_,
@@ -65,6 +73,10 @@ contract RedemptionManager is
         complianceRegistry = complianceRegistry_;
     }
 
+    /// @notice Opens redemption for a token owned by the caller.
+    /// @dev Requires compliance approval, protocol solvency, and fully funded gem reserve.
+    /// @param tokenId NFT token id to redeem.
+    /// @param requestHash Off-chain redemption request hash.
     function requestRedemption(uint256 tokenId, bytes32 requestHash) external nonReentrant whenNotPaused {
         if (nft.ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
         if (!complianceRegistry.canRedeem(msg.sender)) revert RedemptionNotAllowed();
@@ -78,6 +90,9 @@ contract RedemptionManager is
         emit RedemptionOpened(tokenId, gemId, msg.sender, requestHash);
     }
 
+    /// @notice Cancels an open redemption request and unlocks transfers.
+    /// @dev Callable by the token owner or an account with `REDEEMER_ROLE`.
+    /// @param tokenId Token whose redemption should be cancelled.
     function cancelRedemption(uint256 tokenId) external nonReentrant whenNotPaused {
         uint256 gemId = nft.tokenGem(tokenId);
         if (gemId == 0) revert TokenNotMapped();
@@ -88,6 +103,9 @@ contract RedemptionManager is
         emit RedemptionCancelled(tokenId, gemId);
     }
 
+    /// @notice Confirms physical redemption, releases reserve assets, and burns the NFT.
+    /// @dev Caller must be the gem's recorded custodian.
+    /// @param tokenId Token being redeemed.
     function confirmRedemption(uint256 tokenId) external nonReentrant whenNotPaused {
         uint256 gemId = nft.tokenGem(tokenId);
         if (gemId == 0) revert TokenNotMapped();
@@ -100,13 +118,16 @@ contract RedemptionManager is
         emit RedemptionConfirmed(tokenId, gemId);
     }
 
+    /// @notice Pauses redemption requests, cancellation, and confirmation.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
+    /// @notice Unpauses redemption operations.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
+    /// @dev Authorizes UUPS upgrades for `UPGRADER_ROLE` holders.
     function _authorizeUpgrade(address) internal override onlyRole(Roles.UPGRADER_ROLE) {}
 }
