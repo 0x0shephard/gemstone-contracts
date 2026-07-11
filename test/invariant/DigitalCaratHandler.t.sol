@@ -34,6 +34,7 @@ contract DigitalCaratHandler is Test {
     struct TrackedOffer {
         uint256 offerId;
         uint256 tokenId;
+        address paymentAsset;
         uint256 amount;
         bool active;
     }
@@ -193,6 +194,8 @@ contract DigitalCaratHandler is Test {
         if (_isListed(tracked.tokenId) || _isSwapEscrowed(tracked.tokenId)) return;
 
         uint256 priceUsd = bound(priceSeed, 100, 10_000) * 1e18;
+        GemRegistry.Gem memory gem = registry.getGem(tracked.gemId);
+        if (priceUsd < gem.priceUsd) priceUsd = gem.priceUsd;
         vm.startPrank(owner);
         nft.approve(address(marketplace), tracked.tokenId);
         marketplace.list(tracked.tokenId, priceUsd);
@@ -216,7 +219,8 @@ contract DigitalCaratHandler is Test {
         address actor = _actor(actorSeed);
         if (listingSeller == address(0) || listingSeller == actor) return;
 
-        uint256 amount = _usdToUsdc(priceUsd + reserveManager.shortfallUsd(tracked.gemId, priceUsd));
+        GemRegistry.Gem memory gem = registry.getGem(tracked.gemId);
+        uint256 amount = _usdToUsdc(priceUsd + reserveManager.shortfallUsd(tracked.gemId, gem.priceUsd));
         vm.startPrank(actor);
         usdc.approve(address(marketplace), amount);
         marketplace.buy(tracked.tokenId, address(usdc), amount);
@@ -241,7 +245,33 @@ contract DigitalCaratHandler is Test {
         uint256 offerId = marketplace.createOffer(tracked.tokenId, address(usdc), amount);
         vm.stopPrank();
 
-        _offers.push(TrackedOffer({offerId: offerId, tokenId: tracked.tokenId, amount: amount, active: true}));
+        _offers.push(
+            TrackedOffer({
+                offerId: offerId, tokenId: tracked.tokenId, paymentAsset: address(usdc), amount: amount, active: true
+            })
+        );
+    }
+
+    function createNativeMarketplaceOffer(uint256 gemSeed, uint256 actorSeed, uint256 priceSeed) external {
+        if (_offers.length >= MAX_OFFERS) return;
+        TrackedGem storage tracked = _mintedGem(gemSeed);
+        if (tracked.tokenId == 0 || nft.transferLocked(tracked.tokenId)) return;
+        address owner = _safeOwnerOf(tracked.tokenId);
+        address actor = _actor(actorSeed);
+        if (!_isActor(owner) || owner == actor || _isListed(tracked.tokenId) || _isSwapEscrowed(tracked.tokenId)) {
+            return;
+        }
+
+        uint256 priceUsd = bound(priceSeed, 100, 10_000) * 1e18;
+        uint256 amount = _usdToEth(priceUsd);
+        vm.prank(actor);
+        uint256 offerId = marketplace.createOffer{value: amount}(tracked.tokenId, address(0), amount);
+
+        _offers.push(
+            TrackedOffer({
+                offerId: offerId, tokenId: tracked.tokenId, paymentAsset: address(0), amount: amount, active: true
+            })
+        );
     }
 
     function acceptMarketplaceOffer(uint256 offerSeed) external {
@@ -296,6 +326,11 @@ contract DigitalCaratHandler is Test {
         if (_gems.length == 0) return;
         TrackedGem storage tracked = _gems[bound(gemSeed, 0, _gems.length - 1)];
         uint256 liability = bound(liabilitySeed, 0, 20_000) * 1e18;
+        GemRegistry.Gem memory gem = registry.getGem(tracked.gemId);
+        if (gem.status == GemRegistry.GemStatus.Minted || gem.status == GemRegistry.GemStatus.RedemptionRequested) {
+            uint256 required = reserveManager.requiredReserveUsd(tracked.gemId, gem.priceUsd);
+            if (liability < required) liability = required;
+        }
         vm.prank(admin);
         reserveManager.setProjectedLiabilityUsd(tracked.gemId, liability);
         tracked.liabilityUsd = liability;
@@ -432,10 +467,28 @@ contract DigitalCaratHandler is Test {
     function assertReserveAccounting() external view {
         uint256 reserveTotal;
         uint256 liabilityTotal;
+        uint256 nativeAssetTotal;
+        uint256 usdcAssetTotal;
         for (uint256 i = 0; i < _gems.length; i++) {
-            reserveTotal += reserveManager.reserveBalanceUsd(_gems[i].gemId);
-            liabilityTotal += _gems[i].liabilityUsd;
+            uint256 gemId = _gems[i].gemId;
+            GemRegistry.Gem memory gem = registry.getGem(gemId);
+            uint256 reserveBalance = reserveManager.reserveBalanceUsd(gemId);
+            uint256 liability = reserveManager.projectedLiabilityUsd(gemId);
+            reserveTotal += reserveBalance;
+            liabilityTotal += liability;
+            if (gem.status == GemRegistry.GemStatus.Minted || gem.status == GemRegistry.GemStatus.RedemptionRequested) {
+                assertGe(liability, reserveManager.requiredReserveUsd(gemId, gem.priceUsd));
+            }
+            uint256 nativeAssetBalance = reserveManager.reserveAssetBalance(gemId, address(0));
+            uint256 usdcAssetBalance = reserveManager.reserveAssetBalance(gemId, address(usdc));
+            nativeAssetTotal += nativeAssetBalance;
+            usdcAssetTotal += usdcAssetBalance;
+            uint256 nativeUsd = paymentQuoteOrZero(address(0), nativeAssetBalance);
+            uint256 usdcUsd = paymentQuoteOrZero(address(usdc), usdcAssetBalance);
+            if (nativeUsd + usdcUsd != 0) assertLe(reserveBalance, nativeUsd + usdcUsd);
         }
+        assertGe(address(reserveManager).balance, nativeAssetTotal);
+        assertGe(usdc.balanceOf(address(reserveManager)), usdcAssetTotal);
         assertEq(reserveManager.totalReserveBalanceUsd(), reserveTotal);
         assertEq(reserveManager.totalProjectedLiabilitiesUsd(), liabilityTotal);
         if (liabilityTotal == 0) {
@@ -447,6 +500,7 @@ contract DigitalCaratHandler is Test {
 
     function assertEscrowConsistency() external view {
         uint256 activeOfferUsdc;
+        uint256 activeOfferEth;
         for (uint256 i = 0; i < _gems.length; i++) {
             uint256 tokenId = _gems[i].tokenId;
             if (tokenId == 0) continue;
@@ -457,13 +511,20 @@ contract DigitalCaratHandler is Test {
         }
 
         for (uint256 i = 0; i < _offers.length; i++) {
-            (address offerBidder,,, uint256 amount,,, bool active) = marketplace.offers(_offers[i].offerId);
+            (address offerBidder,, address paymentAsset, uint256 amount,,, bool active) =
+                marketplace.offers(_offers[i].offerId);
             if (_offers[i].active && active) {
                 assertEq(offerBidder, _safeOfferBidder(_offers[i].offerId));
-                activeOfferUsdc += amount;
+                assertEq(paymentAsset, _offers[i].paymentAsset);
+                if (paymentAsset == address(0)) {
+                    activeOfferEth += amount;
+                } else if (paymentAsset == address(usdc)) {
+                    activeOfferUsdc += amount;
+                }
             }
         }
         assertGe(usdc.balanceOf(address(marketplace)), activeOfferUsdc);
+        assertGe(address(marketplace).balance, activeOfferEth);
 
         for (uint256 i = 0; i < _swaps.length; i++) {
             (,,,,,,, bool active) = swapEscrow.offers(_swaps[i].offerId);
@@ -471,6 +532,23 @@ contract DigitalCaratHandler is Test {
                 assertEq(nft.ownerOf(_swaps[i].offeredTokenId), address(swapEscrow));
             }
         }
+    }
+
+    function assertAuctionEscrowConsistency() external view {
+        uint256 activeAuctionEth;
+        for (uint256 i = 0; i < _gems.length; i++) {
+            (bool exists, bool settled,,,, address highestBidder, address paymentAsset, uint256 amount,,) =
+                sale.auctions(_gems[i].gemId);
+            if (exists && !settled && highestBidder != address(0) && paymentAsset == address(0)) {
+                activeAuctionEth += amount;
+            }
+        }
+
+        uint256 refundEth;
+        for (uint256 i = 0; i < _actors.length; i++) {
+            refundEth += sale.pendingRefunds(_actors[i], address(0));
+        }
+        assertGe(address(sale).balance, activeAuctionEth + refundEth);
     }
 
     function gemCount() external view returns (uint256) {
@@ -522,6 +600,15 @@ contract DigitalCaratHandler is Test {
 
     function _safeOfferBidder(uint256 offerId) private view returns (address bidder_) {
         (bidder_,,,,,,) = marketplace.offers(offerId);
+    }
+
+    function paymentQuoteOrZero(address asset, uint256 amount) private view returns (uint256 usdValue) {
+        if (amount == 0) return 0;
+        try sale.paymentRegistry().quoteTokenToUsd(asset, amount) returns (uint256 quoted) {
+            usdValue = quoted;
+        } catch {
+            usdValue = 0;
+        }
     }
 
     function _syncLiability(TrackedGem storage tracked) private {

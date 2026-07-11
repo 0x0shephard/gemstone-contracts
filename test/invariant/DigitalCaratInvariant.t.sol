@@ -26,7 +26,7 @@ contract DigitalCaratInvariantTest is StdInvariant, BaseTest {
             actors
         );
 
-        bytes4[] memory selectors = new bytes4[](25);
+        bytes4[] memory selectors = new bytes4[](26);
         selectors[0] = DigitalCaratHandler.registerListedGem.selector;
         selectors[1] = DigitalCaratHandler.withdrawListedGem.selector;
         selectors[2] = DigitalCaratHandler.buyNow.selector;
@@ -38,20 +38,21 @@ contract DigitalCaratInvariantTest is StdInvariant, BaseTest {
         selectors[8] = DigitalCaratHandler.cancelListing.selector;
         selectors[9] = DigitalCaratHandler.buyListing.selector;
         selectors[10] = DigitalCaratHandler.createMarketplaceOffer.selector;
-        selectors[11] = DigitalCaratHandler.acceptMarketplaceOffer.selector;
-        selectors[12] = DigitalCaratHandler.cancelExpiredMarketplaceOffer.selector;
-        selectors[13] = DigitalCaratHandler.fundReserve.selector;
-        selectors[14] = DigitalCaratHandler.consumeReserve.selector;
-        selectors[15] = DigitalCaratHandler.setProjectedLiability.selector;
-        selectors[16] = DigitalCaratHandler.configureSolvency.selector;
-        selectors[17] = DigitalCaratHandler.createSwap.selector;
-        selectors[18] = DigitalCaratHandler.cancelSwap.selector;
-        selectors[19] = DigitalCaratHandler.acceptSwap.selector;
-        selectors[20] = DigitalCaratHandler.setBlocked.selector;
-        selectors[21] = DigitalCaratHandler.requestRedemption.selector;
-        selectors[22] = DigitalCaratHandler.cancelRedemption.selector;
-        selectors[23] = DigitalCaratHandler.confirmRedemption.selector;
-        selectors[24] = DigitalCaratHandler.transferToken.selector;
+        selectors[11] = DigitalCaratHandler.createNativeMarketplaceOffer.selector;
+        selectors[12] = DigitalCaratHandler.acceptMarketplaceOffer.selector;
+        selectors[13] = DigitalCaratHandler.cancelExpiredMarketplaceOffer.selector;
+        selectors[14] = DigitalCaratHandler.fundReserve.selector;
+        selectors[15] = DigitalCaratHandler.consumeReserve.selector;
+        selectors[16] = DigitalCaratHandler.setProjectedLiability.selector;
+        selectors[17] = DigitalCaratHandler.configureSolvency.selector;
+        selectors[18] = DigitalCaratHandler.createSwap.selector;
+        selectors[19] = DigitalCaratHandler.cancelSwap.selector;
+        selectors[20] = DigitalCaratHandler.acceptSwap.selector;
+        selectors[21] = DigitalCaratHandler.setBlocked.selector;
+        selectors[22] = DigitalCaratHandler.requestRedemption.selector;
+        selectors[23] = DigitalCaratHandler.cancelRedemption.selector;
+        selectors[24] = DigitalCaratHandler.confirmRedemption.selector;
+        selectors[25] = DigitalCaratHandler.transferToken.selector;
 
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
@@ -67,5 +68,9 @@ contract DigitalCaratInvariantTest is StdInvariant, BaseTest {
 
     function invariant_escrowConsistency() public view {
         handler.assertEscrowConsistency();
+    }
+
+    function invariant_auctionEscrowConsistency() public view {
+        handler.assertAuctionEscrowConsistency();
     }
 }

@@ -285,6 +285,22 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(sale.pendingRefunds(buyer, address(usdc)), 1_000e6);
     }
 
+    function testBuyNowDuringLiveAuctionMintsAndAuctionBidIsRefundable() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-buy-now-race");
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+
+        vm.prank(bidder);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        assertEq(nft.ownerOf(tokenId), buyer);
+
+        vm.warp(block.timestamp + 1 days);
+        assertEq(sale.settleAuction(gemId), 0);
+        assertEq(sale.pendingRefunds(bidder, address(0)), 0.5 ether);
+    }
+
     function testRedemptionLocksAndBurnsToken() public {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-redeem");
         vm.prank(buyer);

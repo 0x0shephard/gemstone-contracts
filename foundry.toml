@@ -13,13 +13,13 @@ remappings = [
 ]
 
 [invariant]
-runs = 64
-depth = 32
+runs = 128
+depth = 64
 fail_on_revert = false
 
 [profile.deep.invariant]
-runs = 512
-depth = 128
+runs = 1024
+depth = 256
 fail_on_revert = false
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
