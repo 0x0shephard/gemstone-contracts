@@ -53,6 +53,15 @@ contract PaymentReserveLogicTest is BaseTest {
         payments.quoteTokenToUsd(address(0), 1 ether);
     }
 
+    function testSetTokenPreservesOracleBounds() public {
+        payments.setTokenBounds(address(0), 1_500e8, 2_500e8);
+        payments.setToken(address(0), address(ethFeed), 2 days, true);
+
+        ethFeed.updateAnswer(3_000e8);
+        vm.expectRevert(PaymentTokenRegistry.InvalidPrice.selector);
+        payments.quoteTokenToUsd(address(0), 1 ether);
+    }
+
     function testFeeOnTransferReserveFundingRecordsNetReceived() public {
         uint256 gemId = _listedGem(1_000e18, "ipfs://fee-reserve");
         vm.startPrank(buyer);
@@ -118,7 +127,7 @@ contract PaymentReserveLogicTest is BaseTest {
         assertEq(nft.ownerOf(tokenId), buyer);
     }
 
-    function testSolvencyRejectsCrossSubsidizedUnderfundedGem() public {
+    function testSolvencyDoesNotGloballyFreezeForOneUnderfundedGem() public {
         uint256 overfundedGemId = _listedGem(1_000e18, "ipfs://overfunded");
         uint256 underfundedGemId = _listedGem(1_000e18, "ipfs://underfunded");
 
@@ -128,11 +137,31 @@ contract PaymentReserveLogicTest is BaseTest {
 
         assertEq(reserveManager.coverageRatioBps(), 10_000);
         assertTrue(reserveManager.isUnderfunded(underfundedGemId));
-        vm.expectRevert(abi.encodeWithSelector(ReserveManager.UnderfundedReserves.selector, 1));
         reserveManager.requireSolvent();
 
         reserveManager.recordModuleFunding{value: 0.05 ether}(underfundedGemId, address(0), 0.05 ether, 100e18);
         reserveManager.requireSolvent();
+    }
+
+    function testReserveAssetsCanBeReleasedAndRedemptionClearsCoverage() public {
+        _setTwoTierReservePolicy();
+        uint256 gemId = _listedGem(1_000e18, "ipfs://reserve-release");
+
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.52 ether}(gemId, address(0), 0.52 ether);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 40e18);
+        assertEq(reserveManager.totalReserveBalanceUsd(), 40e18);
+
+        uint256 custodianBefore = custodian.balance;
+        vm.prank(buyer);
+        redemption.requestRedemption(tokenId, keccak256("release-reserve"));
+        vm.prank(custodian);
+        redemption.confirmRedemption(tokenId);
+
+        assertEq(custodian.balance - custodianBefore, 0.02 ether);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 0);
+        assertEq(reserveManager.totalReserveBalanceUsd(), 0);
+        assertEq(reserveManager.reserveAssetBalance(gemId, address(0)), 0);
     }
 
     function testMintSyncsProjectedLiabilityAndRedemptionClearsIt() public {

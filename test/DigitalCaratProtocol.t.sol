@@ -120,6 +120,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(buyer.balance, buyerBefore);
 
         vm.warp(block.timestamp + 1 days);
+        ethFeed.updateAnswer(2_000e8);
         uint256 tokenId = sale.settleAuction(gemId);
         assertEq(nft.ownerOf(tokenId), bidder);
         assertEq(seller.balance, 0.48 ether);
@@ -149,6 +150,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.prank(bidder);
         sale.bid{value: 0.55 ether}(gemId, address(0), 0.55 ether);
         vm.warp(block.timestamp + 1 days);
+        ethFeed.updateAnswer(2_000e8);
 
         uint256 settledTokenId = sale.settleAuction(gemId);
         assertEq(nft.ownerOf(settledTokenId), bidder);
@@ -164,6 +166,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         sale.bid{value: 0.6 ether}(gemId, address(0), 0.6 ether);
 
         vm.warp(block.timestamp + 1 days);
+        ethFeed.updateAnswer(2_000e8);
         uint256 tokenId = sale.settleAuction(gemId);
 
         assertEq(nft.ownerOf(tokenId), bidder);
@@ -206,6 +209,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         gemIds[1] = noBidGemId;
 
         vm.warp(block.timestamp + 1 days);
+        ethFeed.updateAnswer(2_000e8);
         uint256 settledCount = sale.settleExpiredAuctions(gemIds);
 
         assertEq(settledCount, 1);
@@ -243,9 +247,42 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.prank(buyer);
         sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
-        vm.warp(block.timestamp + 1 days);
         vm.expectRevert(PrimarySaleAuction.AuctionActive.selector);
         sale.cancelAuction(gemId);
+
+        vm.warp(block.timestamp + 1 days);
+        sale.cancelAuction(gemId);
+        assertEq(sale.pendingRefunds(buyer, address(0)), 0.5 ether);
+    }
+
+    function testAuctionRefundsHighestBidIfGemBecomesUnmintable() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-withdrawn");
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+
+        vm.prank(buyer);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        registry.withdrawListedGem(gemId, keccak256("withdraw-during-auction"));
+        vm.warp(block.timestamp + 1 days);
+
+        assertEq(sale.settleAuction(gemId), 0);
+        assertEq(sale.pendingRefunds(buyer, address(0)), 0.5 ether);
+    }
+
+    function testAuctionRefundsHighestBidIfPaymentTokenRemoved() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-token-removed");
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+
+        vm.startPrank(buyer);
+        usdc.approve(address(sale), 1_000e6);
+        sale.bid(gemId, address(usdc), 1_000e6);
+        vm.stopPrank();
+
+        payments.removeToken(address(usdc));
+        vm.warp(block.timestamp + 1 days);
+
+        assertEq(sale.settleAuction(gemId), 0);
+        assertEq(sale.pendingRefunds(buyer, address(usdc)), 1_000e6);
     }
 
     function testRedemptionLocksAndBurnsToken() public {

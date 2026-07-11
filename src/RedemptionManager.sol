@@ -33,6 +33,7 @@ contract RedemptionManager is
     error NotTokenOwner();
     error TokenNotMapped();
     error RedemptionNotAllowed();
+    error NotRedemptionCanceller();
 
     constructor() {
         _disableInitializers();
@@ -77,9 +78,11 @@ contract RedemptionManager is
         emit RedemptionOpened(tokenId, gemId, msg.sender, requestHash);
     }
 
-    function cancelRedemption(uint256 tokenId) external nonReentrant whenNotPaused onlyRole(Roles.REDEEMER_ROLE) {
+    function cancelRedemption(uint256 tokenId) external nonReentrant whenNotPaused {
         uint256 gemId = nft.tokenGem(tokenId);
         if (gemId == 0) revert TokenNotMapped();
+        address owner = nft.ownerOf(tokenId);
+        if (msg.sender != owner && !hasRole(Roles.REDEEMER_ROLE, msg.sender)) revert NotRedemptionCanceller();
         registry.cancelRedemption(gemId);
         nft.setTransferLocked(tokenId, false);
         emit RedemptionCancelled(tokenId, gemId);
@@ -92,6 +95,7 @@ contract RedemptionManager is
         if (msg.sender != gem.custodian) revert NotGemCustodian();
         registry.markRedeemed(gemId);
         reserveManager.clearProjectedLiabilityUsd(gemId);
+        reserveManager.releaseAllReserveAssets(gemId, msg.sender, keccak256("REDEMPTION_CONFIRMED"));
         nft.burnFromProtocol(tokenId);
         emit RedemptionConfirmed(tokenId, gemId);
     }

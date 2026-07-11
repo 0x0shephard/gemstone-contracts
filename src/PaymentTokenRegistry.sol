@@ -56,13 +56,14 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
     {
         if (feed == address(0) || staleAfter == 0) revert InvalidFeed();
         uint8 tokenDecimals = token == NATIVE_ETH ? 18 : IERC20Metadata(token).decimals();
+        TokenConfig memory previous = tokenConfig[token];
         tokenConfig[token] = TokenConfig({
             enabled: enabled,
             feed: feed,
             staleAfter: staleAfter,
             tokenDecimals: tokenDecimals,
-            minAnswer: 0,
-            maxAnswer: 0
+            minAnswer: previous.minAnswer,
+            maxAnswer: previous.maxAnswer
         });
         emit PaymentTokenSet(token, feed, staleAfter, tokenDecimals, enabled);
     }
@@ -90,16 +91,18 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
         if (!config.enabled) revert TokenNotEnabled();
 
         AggregatorV3Interface feed = AggregatorV3Interface(config.feed);
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = feed.latestRoundData();
-        if (updatedAt == 0 || answeredInRound < roundId) revert StalePrice();
+        (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
+            feed.latestRoundData();
+        if (roundId == 0 || startedAt == 0 || updatedAt == 0 || answeredInRound < roundId) revert StalePrice();
         if (answer <= 0) revert InvalidPrice();
         if (config.maxAnswer != 0 && (answer < config.minAnswer || answer > config.maxAnswer)) revert InvalidPrice();
-        if (block.timestamp - updatedAt > config.staleAfter) revert StalePrice();
+        if (block.timestamp - updatedAt >= config.staleAfter) revert StalePrice();
 
         uint8 feedDecimals = feed.decimals();
         // casting to uint256 is safe because non-positive oracle answers are rejected above.
         // forge-lint: disable-next-line(unsafe-typecast)
         usdValue = (amount * uint256(answer) * USD_DECIMALS) / (10 ** config.tokenDecimals) / (10 ** feedDecimals);
+        if (usdValue == 0) revert InvalidPrice();
     }
 
     function _authorizeUpgrade(address) internal override onlyRole(Roles.UPGRADER_ROLE) {}

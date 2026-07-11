@@ -44,6 +44,7 @@ contract PrimarySaleAuction is
     Treasury public treasury;
     uint64 public constant DAILY_AUCTION_DURATION = 1 days;
     uint256 public constant MAX_BATCH_SETTLEMENTS = 50;
+    uint256 public constant MIN_BID_INCREMENT_USD = 1e18;
 
     mapping(uint256 gemId => Auction) public auctions;
     mapping(address account => mapping(address asset => uint256 amount)) public pendingRefunds;
@@ -160,7 +161,9 @@ contract PrimarySaleAuction is
 
     function _createAuction(uint256 gemId, uint256 floorUsd, uint64 startTime, uint64 endTime) private {
         if (!registry.canMint(gemId)) revert GemNotMintable();
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
         if (floorUsd == 0 || endTime <= startTime || endTime <= block.timestamp) revert InvalidAuction();
+        if (floorUsd < gem.priceUsd) revert InvalidAuction();
         Auction storage auction = auctions[gemId];
         if (auction.exists && !auction.settled) revert InvalidAuction();
 
@@ -189,10 +192,12 @@ contract PrimarySaleAuction is
 
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
-        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, auction.floorUsd);
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         if (usdValue < auction.floorUsd + reserveUsd) revert BidTooLow();
         uint256 saleUsd = usdValue - reserveUsd;
-        if (saleUsd <= auction.usdValue) revert BidTooLow();
+        uint256 minimumSaleUsd = auction.usdValue == 0 ? auction.floorUsd : auction.usdValue + MIN_BID_INCREMENT_USD;
+        if (saleUsd < minimumSaleUsd) revert BidTooLow();
 
         address previousBidder = auction.highestBidder;
         address previousAsset = auction.paymentAsset;
@@ -216,12 +221,19 @@ contract PrimarySaleAuction is
         if (!auction.exists || auction.settled) revert InvalidAuction();
         if (block.timestamp < auction.endTime) revert AuctionNotEnded();
         if (auction.highestBidder == address(0)) revert InvalidAuction();
-        if (!registry.canMint(gemId)) revert GemNotMintable();
+        if (!_canMint(gemId)) {
+            _refundHighestBid(gemId, keccak256("GEM_NOT_MINTABLE"));
+            return 0;
+        }
 
         GemRegistry.Gem memory gem = registry.getGem(gemId);
-        uint256 currentReserveUsd = reserveManager.shortfallUsd(gemId, auction.floorUsd);
+        uint256 currentReserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         uint256 requiredUsd = auction.usdValue + currentReserveUsd;
-        uint256 currentEscrowUsd = paymentRegistry.quoteTokenToUsd(auction.paymentAsset, auction.amount);
+        (bool quoted, uint256 currentEscrowUsd) = _quotePayment(auction.paymentAsset, auction.amount);
+        if (!quoted) {
+            _refundHighestBid(gemId, keccak256("PAYMENT_QUOTE_FAILED"));
+            return 0;
+        }
         if (currentEscrowUsd < requiredUsd) {
             _refundHighestBid(gemId, keccak256("INSUFFICIENT_SETTLEMENT_ESCROW"));
             return 0;
@@ -229,16 +241,16 @@ contract PrimarySaleAuction is
 
         auction.settled = true;
         auction.reserveUsd = currentReserveUsd;
-        uint256 reserveAmount = _proRataAmountRoundUp(auction.amount, currentReserveUsd, requiredUsd);
+        uint256 reserveAmount = _proRataAmountRoundUp(auction.amount, currentReserveUsd, currentEscrowUsd);
         uint256 saleAmount = auction.amount - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, auction.paymentAsset, reserveAmount);
         }
-        reserveManager.requireFunded(gemId, auction.floorUsd);
+        reserveManager.requireFunded(gemId, gem.priceUsd);
 
         tokenId = nft.mintTo(auction.highestBidder, gemId, gem.metadataURI);
         registry.markMinted(gemId, tokenId);
-        reserveManager.syncProjectedLiabilityUsd(gemId, auction.floorUsd);
+        reserveManager.syncProjectedLiabilityUsd(gemId, gem.priceUsd);
         _settle(auction.paymentAsset, gem.seller, saleAmount);
 
         emit AuctionSettled(gemId, tokenId, auction.highestBidder, auction.paymentAsset, auction.amount);
@@ -258,7 +270,9 @@ contract PrimarySaleAuction is
     function cancelAuction(uint256 gemId) external nonReentrant onlyRole(Roles.LISTER_ROLE) {
         Auction storage auction = auctions[gemId];
         if (!auction.exists || auction.settled) revert InvalidAuction();
-        if (auction.highestBidder != address(0)) revert AuctionActive();
+        if (auction.highestBidder != address(0) && block.timestamp < auction.endTime && _canMint(gemId)) {
+            revert AuctionActive();
+        }
 
         address bidder = auction.highestBidder;
         address asset = auction.paymentAsset;
@@ -348,6 +362,24 @@ contract PrimarySaleAuction is
         if (amount == 0) return;
         pendingRefunds[to][paymentAsset] += amount;
         emit RefundCredited(to, paymentAsset, amount);
+    }
+
+    function _quotePayment(address paymentAsset, uint256 amount) private view returns (bool ok, uint256 usdValue) {
+        try paymentRegistry.quoteTokenToUsd(paymentAsset, amount) returns (uint256 quotedUsdValue) {
+            ok = true;
+            usdValue = quotedUsdValue;
+        } catch {
+            ok = false;
+            usdValue = 0;
+        }
+    }
+
+    function _canMint(uint256 gemId) private view returns (bool) {
+        try registry.canMint(gemId) returns (bool canMint_) {
+            return canMint_;
+        } catch {
+            return false;
+        }
     }
 
     function _refundHighestBid(uint256 gemId, bytes32 reasonHash) private {

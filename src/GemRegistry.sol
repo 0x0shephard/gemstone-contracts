@@ -164,6 +164,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     function markRedeemed(uint256 gemId) external whenNotPaused onlyRole(Roles.REDEEMER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.RedemptionRequested) revert InvalidStatus(gem.status);
+        gem.tokenId = 0;
         gem.status = GemStatus.Redeemed;
         emit GemRedeemed(gemId);
     }

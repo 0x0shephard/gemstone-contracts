@@ -125,7 +125,9 @@ contract Marketplace is
 
     function list(uint256 tokenId, uint256 priceUsd) external nonReentrant whenNotPaused {
         if (priceUsd == 0) revert InvalidPrice();
-        _requireMintedGem(tokenId);
+        uint256 gemId = _requireMintedGem(tokenId);
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        if (priceUsd < gem.priceUsd) revert InvalidPrice();
         nft.safeTransferFrom(msg.sender, address(this), tokenId);
         listings[tokenId] = Listing({seller: msg.sender, priceUsd: priceUsd});
         emit Listed(tokenId, msg.sender, priceUsd);
@@ -150,16 +152,17 @@ contract Marketplace is
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
         uint256 gemId = nft.tokenGem(tokenId);
         _requireMintedGemId(gemId);
-        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, listing.priceUsd);
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         if (usdValue < listing.priceUsd + reserveUsd) revert PriceNotMet();
         uint256 reserveAmount = _proRataAmountRoundUp(received, reserveUsd, usdValue);
         uint256 saleAmount = received - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, paymentAsset, reserveAmount);
-            reserveManager.requireFunded(gemId, listing.priceUsd);
+            reserveManager.requireFunded(gemId, gem.priceUsd);
         }
 
-        reserveManager.syncProjectedLiabilityUsd(gemId, listing.priceUsd);
+        reserveManager.syncProjectedLiabilityUsd(gemId, gem.priceUsd);
         _settleSecondary(paymentAsset, listing.seller, saleAmount);
         nft.safeTransferFrom(address(this), msg.sender, tokenId);
         emit Purchased(tokenId, msg.sender, paymentAsset, received, usdValue);
@@ -178,7 +181,8 @@ contract Marketplace is
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
         uint256 gemId = nft.tokenGem(tokenId);
-        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, usdValue);
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         if (usdValue <= reserveUsd) revert PriceNotMet();
         uint256 saleUsdValue = usdValue - reserveUsd;
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -217,19 +221,20 @@ contract Marketplace is
         reserveManager.requireSolvent();
         uint256 gemId = nft.tokenGem(offer.tokenId);
         _requireMintedGemId(gemId);
-        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, offer.saleUsdValue);
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         uint256 requiredUsd = offer.saleUsdValue + reserveUsd;
         uint256 currentEscrowUsd = paymentRegistry.quoteTokenToUsd(offer.paymentAsset, offer.amount);
         if (currentEscrowUsd < requiredUsd) revert PriceNotMet();
 
-        uint256 reserveAmount = _proRataAmountRoundUp(offer.amount, reserveUsd, requiredUsd);
+        uint256 reserveAmount = _proRataAmountRoundUp(offer.amount, reserveUsd, currentEscrowUsd);
         uint256 saleAmount = offer.amount - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, offer.paymentAsset, reserveAmount);
-            reserveManager.requireFunded(gemId, offer.saleUsdValue);
+            reserveManager.requireFunded(gemId, gem.priceUsd);
         }
 
-        reserveManager.syncProjectedLiabilityUsd(gemId, offer.saleUsdValue);
+        reserveManager.syncProjectedLiabilityUsd(gemId, gem.priceUsd);
         _settleSecondary(offer.paymentAsset, msg.sender, saleAmount);
         nft.safeTransferFrom(msg.sender, offer.bidder, offer.tokenId);
         emit OfferAccepted(offerId, msg.sender);

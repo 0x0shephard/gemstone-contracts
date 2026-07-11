@@ -91,6 +91,7 @@ contract RegistryRedemptionLogicTest is BaseTest {
         redemption.requestRedemption(tokenId, keccak256("cancel"));
         assertTrue(nft.transferLocked(tokenId));
 
+        vm.prank(buyer);
         redemption.cancelRedemption(tokenId);
 
         assertFalse(nft.transferLocked(tokenId));

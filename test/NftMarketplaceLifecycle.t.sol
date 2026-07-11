@@ -62,6 +62,8 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         nft.approve(address(marketplace), tokenId);
         vm.expectRevert(Marketplace.InvalidPrice.selector);
         marketplace.list(tokenId, 0);
+        vm.expectRevert(Marketplace.InvalidPrice.selector);
+        marketplace.list(tokenId, 1);
         marketplace.list(tokenId, 1_000e18);
         vm.stopPrank();
 
@@ -140,6 +142,28 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         assertEq(usdc.balanceOf(platform), 20e6);
         assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
         assertEq(reserveManager.reserveAssetBalance(gemId, address(usdc)), 100e6);
+    }
+
+    function testSecondaryOfferDoesNotLowerProjectedLiability() public {
+        _setTwoTierReservePolicy();
+        uint256 gemId = _listedGem(1_000e18, "ipfs://market-liability-floor");
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.52 ether}(gemId, address(0), 0.52 ether);
+
+        assertEq(reserveManager.projectedLiabilityUsd(gemId), 40e18);
+
+        vm.startPrank(bidder);
+        usdc.approve(address(marketplace), 100e6);
+        uint256 offerId = marketplace.createOffer(tokenId, address(usdc), 100e6);
+        vm.stopPrank();
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.acceptOffer(offerId);
+        vm.stopPrank();
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(reserveManager.projectedLiabilityUsd(gemId), 40e18);
     }
 
     function testSecondaryFeeIsConfigurable() public {

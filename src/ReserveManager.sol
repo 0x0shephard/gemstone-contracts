@@ -30,6 +30,8 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     mapping(uint256 gemId => uint256 usdAmount) public minimumReserveUsd;
     mapping(uint256 gemId => uint256 usdAmount) public reserveBalanceUsd;
     mapping(uint256 gemId => mapping(address asset => uint256 amount)) public reserveAssetBalance;
+    mapping(uint256 gemId => address[] assets) private _reserveAssets;
+    mapping(uint256 gemId => mapping(address asset => bool tracked)) private _reserveAssetTracked;
     mapping(uint256 gemId => uint256 usdAmount) public projectedLiabilityUsd;
     mapping(uint256 gemId => bool underfunded) private _underfundedGem;
     uint256 public totalReserveBalanceUsd;
@@ -44,6 +46,14 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     event ReserveFunded(uint256 indexed gemId, address indexed asset, uint256 amount, uint256 usdValue);
     event ReserveConsumed(uint256 indexed gemId, uint256 usdValue);
     event ReserveConsumedFor(uint256 indexed gemId, uint256 usdValue, bytes32 indexed reasonHash);
+    event ReserveReleased(
+        uint256 indexed gemId,
+        address indexed asset,
+        address indexed recipient,
+        uint256 amount,
+        uint256 usdValue,
+        bytes32 reasonHash
+    );
     event ProjectedLiabilityUpdated(uint256 indexed gemId, uint256 liabilityUsd);
     event UnderfundedGemUpdated(uint256 indexed gemId, bool underfunded);
     event MinimumCoverageBpsUpdated(uint16 minimumCoverageBps);
@@ -185,7 +195,9 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         if (amount == 0 || usdValue == 0) revert InvalidAmount();
         if (asset == address(0) && msg.value != amount) revert InvalidAmount();
         if (asset != address(0) && msg.value != 0) revert InvalidAmount();
-        _recordFunding(gemId, asset, amount, usdValue);
+        uint256 quotedUsdValue = paymentRegistry.quoteTokenToUsd(asset, amount);
+        if (quotedUsdValue == 0) revert InvalidAmount();
+        _recordFunding(gemId, asset, amount, quotedUsdValue);
     }
 
     function consumeReserveUsd(uint256 gemId, uint256 usdValue)
@@ -204,6 +216,53 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         _consumeReserveUsd(gemId, usdValue, reasonHash);
     }
 
+    function releaseReserveAsset(uint256 gemId, address asset, uint256 amount, address recipient, bytes32 reasonHash)
+        external
+        whenNotPaused
+        onlyRole(Roles.RESERVE_OPERATOR_ROLE)
+        returns (uint256 usdValue)
+    {
+        _requireExistingGem(gemId);
+        if (recipient == address(0) || amount == 0) revert InvalidAmount();
+        uint256 balance = reserveAssetBalance[gemId][asset];
+        if (balance < amount) revert InvalidAmount();
+
+        usdValue = paymentRegistry.quoteTokenToUsd(asset, amount);
+        if (usdValue == 0) revert InvalidAmount();
+        reserveAssetBalance[gemId][asset] = balance - amount;
+        _decreaseReserveBalanceUsd(gemId, usdValue);
+        _sendAsset(asset, recipient, amount);
+        emit ReserveReleased(gemId, asset, recipient, amount, usdValue, reasonHash);
+    }
+
+    function releaseAllReserveAssets(uint256 gemId, address recipient, bytes32 reasonHash)
+        external
+        whenNotPaused
+        onlyRole(Roles.RESERVE_OPERATOR_ROLE)
+        returns (uint256 releasedCount)
+    {
+        _requireExistingGem(gemId);
+        if (recipient == address(0)) revert InvalidAmount();
+
+        address[] storage assets = _reserveAssets[gemId];
+        for (uint256 i = 0; i < assets.length; i++) {
+            address asset = assets[i];
+            uint256 amount = reserveAssetBalance[gemId][asset];
+            if (amount == 0) continue;
+            reserveAssetBalance[gemId][asset] = 0;
+            _sendAsset(asset, recipient, amount);
+            emit ReserveReleased(gemId, asset, recipient, amount, 0, reasonHash);
+            releasedCount++;
+        }
+
+        uint256 usdBalance = reserveBalanceUsd[gemId];
+        if (usdBalance != 0) {
+            reserveBalanceUsd[gemId] = 0;
+            totalReserveBalanceUsd -= usdBalance;
+            _refreshUnderfundedGem(gemId);
+        }
+    }
+
     function coverageRatioBps() public view returns (uint256) {
         if (totalProjectedLiabilitiesUsd == 0) return type(uint256).max;
         return (totalReserveBalanceUsd * BPS_DENOMINATOR) / totalProjectedLiabilitiesUsd;
@@ -213,7 +272,6 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         if (!globalSolvencyCheckEnabled) return;
         uint256 coverage = coverageRatioBps();
         if (coverage < minimumCoverageBps) revert Insolvent(coverage, minimumCoverageBps);
-        if (underfundedGemCount != 0) revert UnderfundedReserves(underfundedGemCount);
     }
 
     function _consumeReserveUsd(uint256 gemId, uint256 usdValue, bytes32 reasonHash) private {
@@ -266,11 +324,24 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     }
 
     function _recordFunding(uint256 gemId, address asset, uint256 amount, uint256 usdValue) private {
+        if (usdValue == 0) revert InvalidAmount();
+        if (!_reserveAssetTracked[gemId][asset]) {
+            _reserveAssetTracked[gemId][asset] = true;
+            _reserveAssets[gemId].push(asset);
+        }
         reserveAssetBalance[gemId][asset] += amount;
         reserveBalanceUsd[gemId] += usdValue;
         totalReserveBalanceUsd += usdValue;
         _refreshUnderfundedGem(gemId);
         emit ReserveFunded(gemId, asset, amount, usdValue);
+    }
+
+    function _decreaseReserveBalanceUsd(uint256 gemId, uint256 usdValue) private {
+        uint256 balance = reserveBalanceUsd[gemId];
+        uint256 debit = usdValue > balance ? balance : usdValue;
+        reserveBalanceUsd[gemId] = balance - debit;
+        totalReserveBalanceUsd -= debit;
+        _refreshUnderfundedGem(gemId);
     }
 
     function _requireExistingGem(uint256 gemId) private view {
@@ -279,6 +350,23 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     function isUnderfunded(uint256 gemId) external view returns (bool) {
         return _underfundedGem[gemId];
+    }
+
+    function reserveAssetCount(uint256 gemId) external view returns (uint256) {
+        return _reserveAssets[gemId].length;
+    }
+
+    function reserveAssetAt(uint256 gemId, uint256 index) external view returns (address) {
+        return _reserveAssets[gemId][index];
+    }
+
+    function _sendAsset(address asset, address recipient, uint256 amount) private {
+        if (asset == address(0)) {
+            (bool ok,) = payable(recipient).call{value: amount}("");
+            if (!ok) revert InvalidAmount();
+            return;
+        }
+        IERC20(asset).safeTransfer(recipient, amount);
     }
 
     function _refreshUnderfundedGem(uint256 gemId) private {
