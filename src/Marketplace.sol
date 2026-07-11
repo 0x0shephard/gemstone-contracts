@@ -10,6 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {DGENFT} from "./DGENFT.sol";
+import {GemRegistry} from "./GemRegistry.sol";
 import {PaymentTokenRegistry} from "./PaymentTokenRegistry.sol";
 import {ReserveManager} from "./ReserveManager.sol";
 import {Treasury} from "./Treasury.sol";
@@ -44,6 +45,7 @@ contract Marketplace is
     uint64 public constant OFFER_DURATION = 1 days;
 
     DGENFT public nft;
+    GemRegistry public registry;
     PaymentTokenRegistry public paymentRegistry;
     ReserveManager public reserveManager;
     Treasury public treasury;
@@ -84,17 +86,24 @@ contract Marketplace is
     error Expired();
     error NotExpired();
     error TransferFailed();
+    error GemNotMinted();
+
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize(
         address admin,
         DGENFT nft_,
+        GemRegistry registry_,
         PaymentTokenRegistry paymentRegistry_,
         ReserveManager reserveManager_,
         Treasury treasury_
     ) external initializer {
         if (
-            admin == address(0) || address(nft_) == address(0) || address(paymentRegistry_) == address(0)
-                || address(reserveManager_) == address(0) || address(treasury_) == address(0)
+            admin == address(0) || address(nft_) == address(0) || address(registry_) == address(0)
+                || address(paymentRegistry_) == address(0) || address(reserveManager_) == address(0)
+                || address(treasury_) == address(0)
         ) {
             revert InvalidAddress();
         }
@@ -105,6 +114,7 @@ contract Marketplace is
         _grantRole(Roles.UPGRADER_ROLE, admin);
 
         nft = nft_;
+        registry = registry_;
         paymentRegistry = paymentRegistry_;
         reserveManager = reserveManager_;
         treasury = treasury_;
@@ -115,6 +125,7 @@ contract Marketplace is
 
     function list(uint256 tokenId, uint256 priceUsd) external nonReentrant whenNotPaused {
         if (priceUsd == 0) revert InvalidPrice();
+        _requireMintedGem(tokenId);
         nft.safeTransferFrom(msg.sender, address(this), tokenId);
         listings[tokenId] = Listing({seller: msg.sender, priceUsd: priceUsd});
         emit Listed(tokenId, msg.sender, priceUsd);
@@ -138,15 +149,17 @@ contract Marketplace is
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
         uint256 gemId = nft.tokenGem(tokenId);
+        _requireMintedGemId(gemId);
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, listing.priceUsd);
         if (usdValue < listing.priceUsd + reserveUsd) revert PriceNotMet();
-        uint256 saleAmount = _proRataAmount(received, listing.priceUsd, usdValue);
-        uint256 reserveAmount = received - saleAmount;
+        uint256 reserveAmount = _proRataAmountRoundUp(received, reserveUsd, usdValue);
+        uint256 saleAmount = received - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, paymentAsset, reserveAmount);
             reserveManager.requireFunded(gemId, listing.priceUsd);
         }
 
+        reserveManager.syncProjectedLiabilityUsd(gemId, listing.priceUsd);
         _settleSecondary(paymentAsset, listing.seller, saleAmount);
         nft.safeTransferFrom(address(this), msg.sender, tokenId);
         emit Purchased(tokenId, msg.sender, paymentAsset, received, usdValue);
@@ -160,6 +173,7 @@ contract Marketplace is
         returns (uint256 offerId)
     {
         nft.ownerOf(tokenId);
+        _requireMintedGem(tokenId);
         reserveManager.requireSolvent();
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
@@ -202,18 +216,20 @@ contract Marketplace is
 
         reserveManager.requireSolvent();
         uint256 gemId = nft.tokenGem(offer.tokenId);
+        _requireMintedGemId(gemId);
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, offer.saleUsdValue);
         uint256 requiredUsd = offer.saleUsdValue + reserveUsd;
         uint256 currentEscrowUsd = paymentRegistry.quoteTokenToUsd(offer.paymentAsset, offer.amount);
         if (currentEscrowUsd < requiredUsd) revert PriceNotMet();
 
-        uint256 saleAmount = _proRataAmount(offer.amount, offer.saleUsdValue, requiredUsd);
-        uint256 reserveAmount = offer.amount - saleAmount;
+        uint256 reserveAmount = _proRataAmountRoundUp(offer.amount, reserveUsd, requiredUsd);
+        uint256 saleAmount = offer.amount - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, offer.paymentAsset, reserveAmount);
             reserveManager.requireFunded(gemId, offer.saleUsdValue);
         }
 
+        reserveManager.syncProjectedLiabilityUsd(gemId, offer.saleUsdValue);
         _settleSecondary(offer.paymentAsset, msg.sender, saleAmount);
         nft.safeTransferFrom(msg.sender, offer.bidder, offer.tokenId);
         emit OfferAccepted(offerId, msg.sender);
@@ -290,6 +306,11 @@ contract Marketplace is
         return (amount * shareUsd) / totalUsd;
     }
 
+    function _proRataAmountRoundUp(uint256 amount, uint256 shareUsd, uint256 totalUsd) private pure returns (uint256) {
+        if (shareUsd == 0) return 0;
+        return (amount * shareUsd + totalUsd - 1) / totalUsd;
+    }
+
     function _sendPayment(address to, address paymentAsset, uint256 amount) private {
         if (amount == 0) return;
         if (paymentAsset == address(0)) {
@@ -298,6 +319,16 @@ contract Marketplace is
             return;
         }
         IERC20(paymentAsset).safeTransfer(to, amount);
+    }
+
+    function _requireMintedGem(uint256 tokenId) private view returns (uint256 gemId) {
+        gemId = nft.tokenGem(tokenId);
+        _requireMintedGemId(gemId);
+    }
+
+    function _requireMintedGemId(uint256 gemId) private view {
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        if (gem.status != GemRegistry.GemStatus.Minted) revert GemNotMinted();
     }
 
     receive() external payable {}

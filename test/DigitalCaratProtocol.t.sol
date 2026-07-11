@@ -129,20 +129,29 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-reserve-recheck");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
+        uint256 bidderBefore = bidder.balance;
         vm.prank(bidder);
         sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
         reserveManager.setMinimumReserveUsd(gemId, 100e18);
         vm.warp(block.timestamp + 1 days);
 
-        vm.expectRevert(PrimarySaleAuction.BidTooLow.selector);
-        sale.settleAuction(gemId);
+        uint256 tokenId = sale.settleAuction(gemId);
+        assertEq(tokenId, 0);
+        assertEq(sale.pendingRefunds(bidder, address(0)), 0.5 ether);
 
         vm.prank(bidder);
-        reserveManager.fundNative{value: 0.05 ether}(gemId);
+        sale.claimRefund(address(0));
+        assertEq(bidder.balance, bidderBefore);
 
-        uint256 tokenId = sale.settleAuction(gemId);
-        assertEq(nft.ownerOf(tokenId), bidder);
+        ethFeed.updateAnswer(2_000e8);
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+        vm.prank(bidder);
+        sale.bid{value: 0.55 ether}(gemId, address(0), 0.55 ether);
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 settledTokenId = sale.settleAuction(gemId);
+        assertEq(nft.ownerOf(settledTokenId), bidder);
         assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
     }
 
@@ -160,6 +169,17 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(nft.ownerOf(tokenId), bidder);
         assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
         assertEq(reserveManager.reserveAssetBalance(gemId, address(0)), 0.05 ether);
+    }
+
+    function testExactReserveMinimumDoesNotRevertFromRounding() public {
+        uint256 gemId = _listedGem(999e18, "ipfs://gem-rounding");
+        reserveManager.setMinimumReserveUsd(gemId, 1e18);
+
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        assertEq(nft.ownerOf(tokenId), buyer);
+        assertGe(reserveManager.reserveBalanceUsd(gemId), 1e18);
     }
 
     function testDailyAuctionUsesTwentyFourHourDuration() public {
@@ -193,6 +213,13 @@ contract DigitalCaratProtocolTest is BaseTest {
         (bool exists, bool settled,,,,,,,,) = sale.auctions(noBidGemId);
         assertTrue(exists);
         assertFalse(settled);
+    }
+
+    function testBatchSettlementRejectsOversizedInput() public {
+        uint256[] memory gemIds = new uint256[](sale.MAX_BATCH_SETTLEMENTS() + 1);
+
+        vm.expectRevert(PrimarySaleAuction.BatchTooLarge.selector);
+        sale.settleExpiredAuctions(gemIds);
     }
 
     function testAuctionOutbidDoesNotDependOnInlineNativeRefund() public {

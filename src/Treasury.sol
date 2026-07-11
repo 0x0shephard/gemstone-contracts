@@ -38,6 +38,10 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
     error InsufficientBalance();
     error TransferFailed();
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         address admin,
         address platformRecipient_,
@@ -95,9 +99,14 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         whenNotPaused
         onlyRole(Roles.SETTLER_ROLE)
     {
-        if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientBalance();
-        _distributeToken(token, seller, amount);
-        emit SaleSettled(token, seller, amount);
+        if (seller == address(0) || token == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InsufficientBalance();
+        uint256 beforeBalance = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 received = IERC20(token).balanceOf(address(this)) - beforeBalance;
+        if (received == 0) revert InsufficientBalance();
+        _distributeToken(token, seller, received);
+        emit SaleSettled(token, seller, received);
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {

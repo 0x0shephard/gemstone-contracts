@@ -62,6 +62,11 @@ contract SwapEscrow is
     error Expired();
     error InvalidAmount();
     error TransferFailed();
+    error GemNotMinted();
+
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize(
         address admin,
@@ -102,6 +107,9 @@ contract SwapEscrow is
             paymentRegistry.quoteTokenToUsd(cashAsset, cashAmount);
         }
         uint256 requestedGemId = nft.tokenGem(requestedTokenId);
+        uint256 offeredGemId = nft.tokenGem(offeredTokenId);
+        _requireMintedGem(offeredGemId);
+        _requireMintedGem(requestedGemId);
         GemRegistry.Gem memory requestedGem = registry.getGem(requestedGemId);
         reserveManager.requireFunded(requestedGemId, requestedGem.priceUsd);
 
@@ -150,6 +158,8 @@ contract SwapEscrow is
         delete offers[offerId];
         uint256 offeredGemId = nft.tokenGem(offer.offeredTokenId);
         uint256 requestedGemId = nft.tokenGem(offer.requestedTokenId);
+        _requireMintedGem(offeredGemId);
+        _requireMintedGem(requestedGemId);
         GemRegistry.Gem memory offeredGem = registry.getGem(offeredGemId);
         GemRegistry.Gem memory requestedGem = registry.getGem(requestedGemId);
         reserveManager.requireSolvent();
@@ -202,6 +212,11 @@ contract SwapEscrow is
             return;
         }
         IERC20(asset).safeTransfer(to, amount);
+    }
+
+    function _requireMintedGem(uint256 gemId) private view {
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        if (gem.status != GemRegistry.GemStatus.Minted) revert GemNotMinted();
     }
 
     receive() external payable {}

@@ -142,6 +142,7 @@ contract DigitalCaratHandler is Test {
         vm.prank(actor);
         uint256 tokenId = sale.buyNow{value: amount}(tracked.gemId, address(0), amount);
         tracked.tokenId = tokenId;
+        _syncLiability(tracked);
     }
 
     function createDailyAuction(uint256 gemSeed) external {
@@ -177,6 +178,7 @@ contract DigitalCaratHandler is Test {
         gemIds[0] = tracked.gemId;
         sale.settleExpiredAuctions(gemIds);
         tracked.tokenId = nft.tokenForGem(tracked.gemId);
+        _syncLiability(tracked);
     }
 
     function warpForward(uint256 secondsSeed) external {
@@ -219,6 +221,7 @@ contract DigitalCaratHandler is Test {
         usdc.approve(address(marketplace), amount);
         marketplace.buy(tracked.tokenId, address(usdc), amount);
         vm.stopPrank();
+        _syncLiability(tracked);
     }
 
     function createMarketplaceOffer(uint256 gemSeed, uint256 actorSeed, uint256 priceSeed) external {
@@ -255,6 +258,7 @@ contract DigitalCaratHandler is Test {
         marketplace.acceptOffer(tracked.offerId);
         vm.stopPrank();
         tracked.active = false;
+        _syncLiabilityByToken(tracked.tokenId);
     }
 
     function cancelExpiredMarketplaceOffer(uint256 offerSeed) external {
@@ -388,6 +392,7 @@ contract DigitalCaratHandler is Test {
         if (tracked.tokenId == 0 || !nft.transferLocked(tracked.tokenId)) return;
         vm.prank(custodian);
         redemption.confirmRedemption(tracked.tokenId);
+        _syncLiability(tracked);
         tracked.tokenId = 0;
     }
 
@@ -517,6 +522,20 @@ contract DigitalCaratHandler is Test {
 
     function _safeOfferBidder(uint256 offerId) private view returns (address bidder_) {
         (bidder_,,,,,,) = marketplace.offers(offerId);
+    }
+
+    function _syncLiability(TrackedGem storage tracked) private {
+        tracked.liabilityUsd = reserveManager.projectedLiabilityUsd(tracked.gemId);
+    }
+
+    function _syncLiabilityByToken(uint256 tokenId) private {
+        uint256 gemId = nft.tokenGem(tokenId);
+        for (uint256 i = 0; i < _gems.length; i++) {
+            if (_gems[i].gemId == gemId) {
+                _gems[i].liabilityUsd = reserveManager.projectedLiabilityUsd(gemId);
+                return;
+            }
+        }
     }
 
     function _auctionExistsAndOpen(uint256 gemId) private view returns (bool) {

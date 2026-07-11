@@ -17,6 +17,10 @@ contract ComplianceRegistry is Initializable, AccessControlUpgradeable, UUPSUpgr
 
     error InvalidAddress();
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(address admin) external initializer {
         if (admin == address(0)) revert InvalidAddress();
         __AccessControl_init();

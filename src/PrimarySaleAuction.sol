@@ -43,6 +43,7 @@ contract PrimarySaleAuction is
     ReserveManager public reserveManager;
     Treasury public treasury;
     uint64 public constant DAILY_AUCTION_DURATION = 1 days;
+    uint256 public constant MAX_BATCH_SETTLEMENTS = 50;
 
     mapping(uint256 gemId => Auction) public auctions;
     mapping(address account => mapping(address asset => uint256 amount)) public pendingRefunds;
@@ -63,6 +64,9 @@ contract PrimarySaleAuction is
         uint256 indexed gemId, uint256 indexed tokenId, address indexed winner, address paymentAsset, uint256 amount
     );
     event AuctionCancelled(uint256 indexed gemId);
+    event AuctionSettlementRefunded(
+        uint256 indexed gemId, address indexed bidder, address indexed paymentAsset, uint256 amount, bytes32 reasonHash
+    );
     event RefundCredited(address indexed account, address indexed asset, uint256 amount);
     event RefundClaimed(address indexed account, address indexed asset, uint256 amount);
     event AuctionSettlementSkipped(uint256 indexed gemId, bytes reason);
@@ -76,6 +80,11 @@ contract PrimarySaleAuction is
     error BidTooLow();
     error GemNotMintable();
     error TransferFailed();
+    error BatchTooLarge();
+
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize(
         address admin,
@@ -120,8 +129,8 @@ contract PrimarySaleAuction is
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         if (usdValue < gem.priceUsd + reserveUsd) revert BidTooLow();
-        uint256 saleAmount = _proRataAmount(received, gem.priceUsd, usdValue);
-        uint256 reserveAmount = received - saleAmount;
+        uint256 reserveAmount = _proRataAmountRoundUp(received, reserveUsd, usdValue);
+        uint256 saleAmount = received - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, paymentAsset, reserveAmount);
             reserveManager.requireFunded(gemId, gem.priceUsd);
@@ -129,6 +138,7 @@ contract PrimarySaleAuction is
 
         tokenId = nft.mintTo(msg.sender, gemId, gem.metadataURI);
         registry.markMinted(gemId, tokenId);
+        reserveManager.syncProjectedLiabilityUsd(gemId, gem.priceUsd);
         _settle(paymentAsset, gem.seller, saleAmount);
 
         emit BuyNow(gemId, tokenId, msg.sender, paymentAsset, received, usdValue);
@@ -207,18 +217,20 @@ contract PrimarySaleAuction is
         if (block.timestamp < auction.endTime) revert AuctionNotEnded();
         if (auction.highestBidder == address(0)) revert InvalidAuction();
         if (!registry.canMint(gemId)) revert GemNotMintable();
-        reserveManager.requireSolvent();
 
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         uint256 currentReserveUsd = reserveManager.shortfallUsd(gemId, auction.floorUsd);
         uint256 requiredUsd = auction.usdValue + currentReserveUsd;
         uint256 currentEscrowUsd = paymentRegistry.quoteTokenToUsd(auction.paymentAsset, auction.amount);
-        if (currentEscrowUsd < requiredUsd) revert BidTooLow();
+        if (currentEscrowUsd < requiredUsd) {
+            _refundHighestBid(gemId, keccak256("INSUFFICIENT_SETTLEMENT_ESCROW"));
+            return 0;
+        }
 
         auction.settled = true;
         auction.reserveUsd = currentReserveUsd;
-        uint256 saleAmount = _proRataAmount(auction.amount, auction.usdValue, requiredUsd);
-        uint256 reserveAmount = auction.amount - saleAmount;
+        uint256 reserveAmount = _proRataAmountRoundUp(auction.amount, currentReserveUsd, requiredUsd);
+        uint256 saleAmount = auction.amount - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, auction.paymentAsset, reserveAmount);
         }
@@ -226,15 +238,17 @@ contract PrimarySaleAuction is
 
         tokenId = nft.mintTo(auction.highestBidder, gemId, gem.metadataURI);
         registry.markMinted(gemId, tokenId);
+        reserveManager.syncProjectedLiabilityUsd(gemId, auction.floorUsd);
         _settle(auction.paymentAsset, gem.seller, saleAmount);
 
         emit AuctionSettled(gemId, tokenId, auction.highestBidder, auction.paymentAsset, auction.amount);
     }
 
     function settleExpiredAuctions(uint256[] calldata gemIds) external whenNotPaused returns (uint256 settledCount) {
+        if (gemIds.length > MAX_BATCH_SETTLEMENTS) revert BatchTooLarge();
         for (uint256 i = 0; i < gemIds.length; i++) {
             try this.settleAuction(gemIds[i]) returns (uint256) {
-                settledCount++;
+                if (nft.tokenForGem(gemIds[i]) != 0) settledCount++;
             } catch (bytes memory reason) {
                 emit AuctionSettlementSkipped(gemIds[i], reason);
             }
@@ -291,10 +305,9 @@ contract PrimarySaleAuction is
             return;
         }
 
-        uint256 beforeBalance = IERC20(paymentAsset).balanceOf(address(treasury));
-        IERC20(paymentAsset).safeTransfer(address(treasury), amount);
-        uint256 receivedByTreasury = IERC20(paymentAsset).balanceOf(address(treasury)) - beforeBalance;
-        treasury.settleToken(paymentAsset, seller, receivedByTreasury);
+        IERC20(paymentAsset).forceApprove(address(treasury), amount);
+        treasury.settleToken(paymentAsset, seller, amount);
+        IERC20(paymentAsset).forceApprove(address(treasury), 0);
     }
 
     function _fundReserve(uint256 gemId, address paymentAsset, uint256 amount) private {
@@ -316,6 +329,11 @@ contract PrimarySaleAuction is
         return (amount * shareUsd) / totalUsd;
     }
 
+    function _proRataAmountRoundUp(uint256 amount, uint256 shareUsd, uint256 totalUsd) private pure returns (uint256) {
+        if (shareUsd == 0) return 0;
+        return (amount * shareUsd + totalUsd - 1) / totalUsd;
+    }
+
     function _refund(address to, address paymentAsset, uint256 amount) private {
         if (amount == 0) return;
         if (paymentAsset == address(0)) {
@@ -330,6 +348,20 @@ contract PrimarySaleAuction is
         if (amount == 0) return;
         pendingRefunds[to][paymentAsset] += amount;
         emit RefundCredited(to, paymentAsset, amount);
+    }
+
+    function _refundHighestBid(uint256 gemId, bytes32 reasonHash) private {
+        Auction storage auction = auctions[gemId];
+        address bidder = auction.highestBidder;
+        address asset = auction.paymentAsset;
+        uint256 amount = auction.amount;
+        auction.settled = true;
+        auction.highestBidder = address(0);
+        auction.amount = 0;
+        auction.usdValue = 0;
+        auction.reserveUsd = 0;
+        _creditRefund(bidder, asset, amount);
+        emit AuctionSettlementRefunded(gemId, bidder, asset, amount, reasonHash);
     }
 
     receive() external payable {}

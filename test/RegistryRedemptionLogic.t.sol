@@ -165,17 +165,19 @@ contract RegistryRedemptionLogicTest is BaseTest {
         nft.mintTo(bidder, gemId, "ipfs://duplicate");
 
         nft.deleteDefaultRoyalty();
+        vm.prank(address(redemption));
         nft.burnFromProtocol(tokenId);
         assertEq(nft.tokenForGem(gemId), 0);
         assertEq(nft.tokenGem(tokenId), 0);
     }
 
     function testReserveDefaultBpsAndMinimumReserveOverride() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://reserve-minimum");
         reserveManager.setDefaultReserveBps(250);
-        reserveManager.setMinimumReserveUsd(99, 100e18);
+        reserveManager.setMinimumReserveUsd(gemId, 100e18);
 
         assertEq(reserveManager.reserveBpsFor(10_000e18), 250);
-        assertEq(reserveManager.requiredReserveUsd(99, 1_000e18), 100e18);
+        assertEq(reserveManager.requiredReserveUsd(gemId, 1_000e18), 100e18);
 
         vm.expectRevert(ReserveManager.InvalidReserveBps.selector);
         reserveManager.setDefaultReserveBps(10_001);

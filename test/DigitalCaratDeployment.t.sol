@@ -38,7 +38,8 @@ contract DigitalCaratDeploymentTest is BaseTest {
         ReserveManager reserveManager = ReserveManager(
             payable(address(
                     new ERC1967Proxy(
-                        address(new ReserveManager()), abi.encodeCall(ReserveManager.initialize, (admin, payments))
+                        address(new ReserveManager()),
+                        abi.encodeCall(ReserveManager.initialize, (admin, payments, registry))
                     )
                 ))
         );
@@ -81,7 +82,9 @@ contract DigitalCaratDeploymentTest is BaseTest {
             payable(address(
                     new ERC1967Proxy(
                         address(new Marketplace()),
-                        abi.encodeCall(Marketplace.initialize, (admin, nft, payments, reserveManager, treasury))
+                        abi.encodeCall(
+                            Marketplace.initialize, (admin, nft, registry, payments, reserveManager, treasury)
+                        )
                     )
                 ))
         );
@@ -97,6 +100,8 @@ contract DigitalCaratDeploymentTest is BaseTest {
         nft.grantRole(Roles.MINTER_ROLE, address(sale));
         nft.grantRole(Roles.BURNER_ROLE, address(redemption));
         nft.grantRole(Roles.LOCKER_ROLE, address(redemption));
+        nft.revokeRole(Roles.BURNER_ROLE, admin);
+        nft.revokeRole(Roles.LOCKER_ROLE, admin);
         registry.grantRole(Roles.MINTER_ROLE, address(sale));
         registry.grantRole(Roles.REDEEMER_ROLE, address(redemption));
         registry.grantRole(Roles.CUSTODIAN_ROLE, custodian);
@@ -104,6 +109,7 @@ contract DigitalCaratDeploymentTest is BaseTest {
         treasury.grantRole(Roles.SETTLER_ROLE, address(marketplace));
         reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(sale));
         reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(marketplace));
+        reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(redemption));
         marketplace.setSecondaryFeeRecipient(platform);
 
         payments.setToken(address(0), address(new MockV3Aggregator(8, 2_000e8)), 1 days, true);

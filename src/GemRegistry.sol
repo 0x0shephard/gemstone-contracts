@@ -53,6 +53,10 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     error InvalidPrice();
     error NotGemCustodian();
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(address admin) external initializer {
         if (admin == address(0)) revert InvalidAddress();
         __AccessControl_init();

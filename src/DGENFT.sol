@@ -33,6 +33,10 @@ contract DGENFT is
     error GemAlreadyMinted();
     error TokenLocked();
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(address admin, string calldata name_, string calldata symbol_) external initializer {
         if (admin == address(0)) revert InvalidAddress();
         __ERC721_init(name_, symbol_);

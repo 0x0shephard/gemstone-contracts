@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ComplianceRegistry} from "../src/ComplianceRegistry.sol";
 import {DGENFT} from "../src/DGENFT.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
@@ -53,34 +54,93 @@ abstract contract BaseTest is Test {
     }
 
     function _deployProtocol() internal {
-        nft = new DGENFT();
-        registry = new GemRegistry();
-        payments = new PaymentTokenRegistry();
-        treasury = new Treasury();
-        reserveManager = new ReserveManager();
-        compliance = new ComplianceRegistry();
-        sale = new PrimarySaleAuction();
-        redemption = new RedemptionManager();
-        marketplace = new Marketplace();
-        swapEscrow = new SwapEscrow();
-
-        nft.initialize(admin, "Digital Carat Gem", "DGE");
-        registry.initialize(admin);
-        payments.initialize(admin);
-        reserveManager.initialize(admin, payments);
-        compliance.initialize(admin);
-        treasury.initialize(admin, platform, vaultReserve, insuranceReserve, treasuryReserve);
-        sale.initialize(admin, nft, registry, payments, reserveManager, treasury);
-        redemption.initialize(admin, nft, registry, reserveManager, compliance);
-        marketplace.initialize(admin, nft, payments, reserveManager, treasury);
+        nft = DGENFT(
+            address(
+                new ERC1967Proxy(
+                    address(new DGENFT()), abi.encodeCall(DGENFT.initialize, (admin, "Digital Carat Gem", "DGE"))
+                )
+            )
+        );
+        registry = GemRegistry(
+            address(new ERC1967Proxy(address(new GemRegistry()), abi.encodeCall(GemRegistry.initialize, (admin))))
+        );
+        payments = PaymentTokenRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(new PaymentTokenRegistry()), abi.encodeCall(PaymentTokenRegistry.initialize, (admin))
+                )
+            )
+        );
+        reserveManager = ReserveManager(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(new ReserveManager()),
+                        abi.encodeCall(ReserveManager.initialize, (admin, payments, registry))
+                    )
+                ))
+        );
+        compliance = ComplianceRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(new ComplianceRegistry()), abi.encodeCall(ComplianceRegistry.initialize, (admin))
+                )
+            )
+        );
+        treasury = Treasury(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(new Treasury()),
+                        abi.encodeCall(
+                            Treasury.initialize, (admin, platform, vaultReserve, insuranceReserve, treasuryReserve)
+                        )
+                    )
+                ))
+        );
+        sale = PrimarySaleAuction(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(new PrimarySaleAuction()),
+                        abi.encodeCall(
+                            PrimarySaleAuction.initialize, (admin, nft, registry, payments, reserveManager, treasury)
+                        )
+                    )
+                ))
+        );
+        redemption = RedemptionManager(
+            address(
+                new ERC1967Proxy(
+                    address(new RedemptionManager()),
+                    abi.encodeCall(RedemptionManager.initialize, (admin, nft, registry, reserveManager, compliance))
+                )
+            )
+        );
+        marketplace = Marketplace(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(new Marketplace()),
+                        abi.encodeCall(
+                            Marketplace.initialize, (admin, nft, registry, payments, reserveManager, treasury)
+                        )
+                    )
+                ))
+        );
+        swapEscrow = SwapEscrow(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(new SwapEscrow()),
+                        abi.encodeCall(SwapEscrow.initialize, (admin, nft, registry, payments, reserveManager))
+                    )
+                ))
+        );
         marketplace.setSecondaryFeeRecipient(platform);
-        swapEscrow.initialize(admin, nft, registry, payments, reserveManager);
     }
 
     function _configureDefaultRoles() internal {
         nft.grantRole(Roles.MINTER_ROLE, address(sale));
         nft.grantRole(Roles.BURNER_ROLE, address(redemption));
         nft.grantRole(Roles.LOCKER_ROLE, address(redemption));
+        nft.revokeRole(Roles.BURNER_ROLE, admin);
+        nft.revokeRole(Roles.LOCKER_ROLE, admin);
         registry.grantRole(Roles.MINTER_ROLE, address(sale));
         registry.grantRole(Roles.REDEEMER_ROLE, address(redemption));
         registry.grantRole(Roles.CUSTODIAN_ROLE, custodian);
@@ -88,6 +148,7 @@ abstract contract BaseTest is Test {
         treasury.grantRole(Roles.SETTLER_ROLE, address(marketplace));
         reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(sale));
         reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(marketplace));
+        reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(redemption));
     }
 
     function _configureDefaultPayments() internal {

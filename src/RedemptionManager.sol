@@ -34,6 +34,10 @@ contract RedemptionManager is
     error TokenNotMapped();
     error RedemptionNotAllowed();
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         address admin,
         DGENFT nft_,
@@ -87,6 +91,7 @@ contract RedemptionManager is
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         if (msg.sender != gem.custodian) revert NotGemCustodian();
         registry.markRedeemed(gemId);
+        reserveManager.clearProjectedLiabilityUsd(gemId);
         nft.burnFromProtocol(tokenId);
         emit RedemptionConfirmed(tokenId, gemId);
     }

@@ -61,7 +61,7 @@ contract DeployDigitalCarat is Script {
             payable(address(
                     new ERC1967Proxy(
                         address(new ReserveManager()),
-                        abi.encodeCall(ReserveManager.initialize, (admin, deployment.payments))
+                        abi.encodeCall(ReserveManager.initialize, (admin, deployment.payments, deployment.registry))
                     )
                 ))
         );
@@ -124,7 +124,14 @@ contract DeployDigitalCarat is Script {
                         address(new Marketplace()),
                         abi.encodeCall(
                             Marketplace.initialize,
-                            (admin, deployment.nft, deployment.payments, deployment.reserveManager, deployment.treasury)
+                            (
+                                admin,
+                                deployment.nft,
+                                deployment.registry,
+                                deployment.payments,
+                                deployment.reserveManager,
+                                deployment.treasury
+                            )
                         )
                     )
                 ))
@@ -153,12 +160,15 @@ contract DeployDigitalCarat is Script {
         deployment.nft.grantRole(Roles.MINTER_ROLE, address(deployment.sale));
         deployment.nft.grantRole(Roles.BURNER_ROLE, address(deployment.redemption));
         deployment.nft.grantRole(Roles.LOCKER_ROLE, address(deployment.redemption));
+        deployment.nft.revokeRole(Roles.BURNER_ROLE, admin);
+        deployment.nft.revokeRole(Roles.LOCKER_ROLE, admin);
         deployment.registry.grantRole(Roles.MINTER_ROLE, address(deployment.sale));
         deployment.registry.grantRole(Roles.REDEEMER_ROLE, address(deployment.redemption));
         deployment.treasury.grantRole(Roles.SETTLER_ROLE, address(deployment.sale));
         deployment.treasury.grantRole(Roles.SETTLER_ROLE, address(deployment.marketplace));
         deployment.reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(deployment.sale));
         deployment.reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(deployment.marketplace));
+        deployment.reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(deployment.redemption));
 
         vm.stopBroadcast();
     }

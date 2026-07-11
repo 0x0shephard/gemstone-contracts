@@ -60,19 +60,21 @@ contract TreasuryLogicTest is BaseTest {
     }
 
     function testSettleTokenRejectsZeroSeller() public {
-        usdc.mint(address(treasury), 1e6);
-
         vm.expectRevert(Treasury.InvalidAddress.selector);
         treasury.settleToken(address(usdc), address(0), 1e6);
     }
 
-    function testSettleTokenRequiresTreasuryBalance() public {
-        vm.expectRevert(Treasury.InsufficientBalance.selector);
+    function testSettleTokenDoesNotDistributeStandingBalance() public {
+        usdc.mint(address(treasury), 1e6);
+
+        vm.expectRevert();
         treasury.settleToken(address(usdc), seller, 1e6);
+        assertEq(usdc.balanceOf(address(treasury)), 1e6);
     }
 
     function testZeroValueTokenDistributionStillSettles() public {
-        usdc.mint(address(treasury), 1);
+        usdc.mint(admin, 1);
+        usdc.approve(address(treasury), 1);
         treasury.setSplits(
             Treasury.Splits({
                 sellerBps: 0, platformBps: 10_000, vaultReserveBps: 0, insuranceReserveBps: 0, treasuryReserveBps: 0
