@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {DGENFT} from "../src/DGENFT.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
+import {PrimarySaleAuction} from "../src/PrimarySaleAuction.sol";
 import {RedemptionManager} from "../src/RedemptionManager.sol";
 import {ReserveManager} from "../src/ReserveManager.sol";
 import {BaseTest} from "./BaseTest.t.sol";
@@ -62,6 +63,27 @@ contract RegistryRedemptionLogicTest is BaseTest {
         registry.confirmCustody(gemId);
     }
 
+    function testListerCanWithdrawUnsoldListedGem() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://withdraw-listed");
+
+        registry.withdrawListedGem(gemId, keccak256("seller-returned"));
+
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        assertEq(uint256(gem.status), uint256(GemRegistry.GemStatus.Withdrawn));
+        assertFalse(registry.canMint(gemId));
+
+        vm.prank(buyer);
+        vm.expectRevert(PrimarySaleAuction.GemNotMintable.selector);
+        sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+    }
+
+    function testWithdrawalRequiresListedUnmintedGem() public {
+        (uint256 gemId,) = _mintGemTo(buyer, 1_000e18, "ipfs://withdraw-minted");
+
+        vm.expectRevert(abi.encodeWithSelector(GemRegistry.InvalidStatus.selector, GemRegistry.GemStatus.Minted));
+        registry.withdrawListedGem(gemId, keccak256("bad-withdraw"));
+    }
+
     function testCancelRedemptionUnlocksTokenAndRestoresMintedStatus() public {
         (uint256 gemId, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://cancel-redemption");
 
@@ -90,6 +112,37 @@ contract RegistryRedemptionLogicTest is BaseTest {
         vm.prank(stranger);
         vm.expectRevert(RedemptionManager.NotGemCustodian.selector);
         redemption.confirmRedemption(tokenId);
+    }
+
+    function testBlockedWalletCannotRedeemButCanStillTransfer() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://redeem-blocked");
+        compliance.setBlocked(buyer, true);
+
+        vm.prank(buyer);
+        nft.transferFrom(buyer, bidder, tokenId);
+        assertEq(nft.ownerOf(tokenId), bidder);
+
+        vm.prank(bidder);
+        nft.transferFrom(bidder, buyer, tokenId);
+
+        vm.prank(buyer);
+        vm.expectRevert(RedemptionManager.RedemptionNotAllowed.selector);
+        redemption.requestRedemption(tokenId, keccak256("blocked"));
+    }
+
+    function testRedemptionApprovalRequiredMode() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://redeem-approval");
+        compliance.setRedemptionApprovalRequired(true);
+
+        vm.prank(buyer);
+        vm.expectRevert(RedemptionManager.RedemptionNotAllowed.selector);
+        redemption.requestRedemption(tokenId, keccak256("unapproved"));
+
+        compliance.setRedemptionApproved(buyer, true);
+        vm.prank(buyer);
+        redemption.requestRedemption(tokenId, keccak256("approved"));
+
+        assertTrue(nft.transferLocked(tokenId));
     }
 
     function testRedemptionPauseBlocksRequests() public {

@@ -42,6 +42,7 @@ contract PrimarySaleAuction is
     PaymentTokenRegistry public paymentRegistry;
     ReserveManager public reserveManager;
     Treasury public treasury;
+    uint64 public constant DAILY_AUCTION_DURATION = 1 days;
 
     mapping(uint256 gemId => Auction) public auctions;
     mapping(address account => mapping(address asset => uint256 amount)) public pendingRefunds;
@@ -64,6 +65,7 @@ contract PrimarySaleAuction is
     event AuctionCancelled(uint256 indexed gemId);
     event RefundCredited(address indexed account, address indexed asset, uint256 amount);
     event RefundClaimed(address indexed account, address indexed asset, uint256 amount);
+    event AuctionSettlementSkipped(uint256 indexed gemId, bytes reason);
 
     error InvalidAddress();
     error InvalidAmount();
@@ -111,6 +113,7 @@ contract PrimarySaleAuction is
         returns (uint256 tokenId)
     {
         if (!registry.canMint(gemId)) revert GemNotMintable();
+        reserveManager.requireSolvent();
         GemRegistry.Gem memory gem = registry.getGem(gemId);
 
         uint256 received = _collectPayment(paymentAsset, amount);
@@ -136,6 +139,16 @@ contract PrimarySaleAuction is
         whenNotPaused
         onlyRole(Roles.LISTER_ROLE)
     {
+        _createAuction(gemId, floorUsd, startTime, endTime);
+    }
+
+    function createDailyAuction(uint256 gemId, uint256 floorUsd) external whenNotPaused onlyRole(Roles.LISTER_ROLE) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint64 startTime = uint64(block.timestamp);
+        _createAuction(gemId, floorUsd, startTime, startTime + DAILY_AUCTION_DURATION);
+    }
+
+    function _createAuction(uint256 gemId, uint256 floorUsd, uint64 startTime, uint64 endTime) private {
         if (!registry.canMint(gemId)) revert GemNotMintable();
         if (floorUsd == 0 || endTime <= startTime || endTime <= block.timestamp) revert InvalidAuction();
         Auction storage auction = auctions[gemId];
@@ -162,6 +175,7 @@ contract PrimarySaleAuction is
         if (!auction.exists || auction.settled) revert InvalidAuction();
         if (block.timestamp < auction.startTime) revert InvalidAuction();
         if (block.timestamp >= auction.endTime) revert AuctionEnded();
+        reserveManager.requireSolvent();
 
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
@@ -193,22 +207,38 @@ contract PrimarySaleAuction is
         if (block.timestamp < auction.endTime) revert AuctionNotEnded();
         if (auction.highestBidder == address(0)) revert InvalidAuction();
         if (!registry.canMint(gemId)) revert GemNotMintable();
+        reserveManager.requireSolvent();
 
         GemRegistry.Gem memory gem = registry.getGem(gemId);
+        uint256 currentReserveUsd = reserveManager.shortfallUsd(gemId, auction.floorUsd);
+        uint256 requiredUsd = auction.usdValue + currentReserveUsd;
+        uint256 currentEscrowUsd = paymentRegistry.quoteTokenToUsd(auction.paymentAsset, auction.amount);
+        if (currentEscrowUsd < requiredUsd) revert BidTooLow();
+
         auction.settled = true;
-        uint256 totalUsd = auction.usdValue + auction.reserveUsd;
-        uint256 saleAmount = _proRataAmount(auction.amount, auction.usdValue, totalUsd);
+        auction.reserveUsd = currentReserveUsd;
+        uint256 saleAmount = _proRataAmount(auction.amount, auction.usdValue, requiredUsd);
         uint256 reserveAmount = auction.amount - saleAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, auction.paymentAsset, reserveAmount);
-            reserveManager.requireFunded(gemId, auction.floorUsd);
         }
+        reserveManager.requireFunded(gemId, auction.floorUsd);
 
         tokenId = nft.mintTo(auction.highestBidder, gemId, gem.metadataURI);
         registry.markMinted(gemId, tokenId);
         _settle(auction.paymentAsset, gem.seller, saleAmount);
 
         emit AuctionSettled(gemId, tokenId, auction.highestBidder, auction.paymentAsset, auction.amount);
+    }
+
+    function settleExpiredAuctions(uint256[] calldata gemIds) external whenNotPaused returns (uint256 settledCount) {
+        for (uint256 i = 0; i < gemIds.length; i++) {
+            try this.settleAuction(gemIds[i]) returns (uint256) {
+                settledCount++;
+            } catch (bytes memory reason) {
+                emit AuctionSettlementSkipped(gemIds[i], reason);
+            }
+        }
     }
 
     function cancelAuction(uint256 gemId) external nonReentrant onlyRole(Roles.LISTER_ROLE) {

@@ -57,6 +57,35 @@ contract PaymentReserveLogicTest is BaseTest {
         assertEq(reserveManager.reserveBalanceUsd(1), 60e18);
     }
 
+    function testReasonedReserveConsumptionUpdatesAggregateBalance() public {
+        reserveManager.recordModuleFunding{value: 0.05 ether}(1, address(0), 0.05 ether, 100e18);
+
+        reserveManager.consumeReserveUsdFor(1, 25e18, keccak256("vault-fee"));
+
+        assertEq(reserveManager.reserveBalanceUsd(1), 75e18);
+        assertEq(reserveManager.totalReserveBalanceUsd(), 75e18);
+    }
+
+    function testCoverageRatioAndSolvencyGuard() public {
+        reserveManager.recordModuleFunding{value: 0.05 ether}(1, address(0), 0.05 ether, 100e18);
+        reserveManager.setProjectedLiabilityUsd(1, 200e18);
+
+        assertEq(reserveManager.coverageRatioBps(), 5_000);
+
+        reserveManager.setMinimumCoverageBps(6_000);
+        reserveManager.setGlobalSolvencyCheckEnabled(true);
+
+        uint256 gemId = _listedGem(1_000e18, "ipfs://insolvent");
+        vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(ReserveManager.Insolvent.selector, 5_000, 6_000));
+        sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        reserveManager.setGlobalSolvencyCheckEnabled(false);
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        assertEq(nft.ownerOf(tokenId), buyer);
+    }
+
     function testReserveBracketReadApi() public {
         _setTwoTierReservePolicy();
 

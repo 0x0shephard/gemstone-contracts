@@ -6,6 +6,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ComplianceRegistry} from "./ComplianceRegistry.sol";
 import {DGENFT} from "./DGENFT.sol";
 import {GemRegistry} from "./GemRegistry.sol";
 import {ReserveManager} from "./ReserveManager.sol";
@@ -21,6 +22,7 @@ contract RedemptionManager is
     DGENFT public nft;
     GemRegistry public registry;
     ReserveManager public reserveManager;
+    ComplianceRegistry public complianceRegistry;
 
     event RedemptionOpened(uint256 indexed tokenId, uint256 indexed gemId, address indexed owner, bytes32 requestHash);
     event RedemptionCancelled(uint256 indexed tokenId, uint256 indexed gemId);
@@ -30,14 +32,18 @@ contract RedemptionManager is
     error NotGemCustodian();
     error NotTokenOwner();
     error TokenNotMapped();
+    error RedemptionNotAllowed();
 
-    function initialize(address admin, DGENFT nft_, GemRegistry registry_, ReserveManager reserveManager_)
-        external
-        initializer
-    {
+    function initialize(
+        address admin,
+        DGENFT nft_,
+        GemRegistry registry_,
+        ReserveManager reserveManager_,
+        ComplianceRegistry complianceRegistry_
+    ) external initializer {
         if (
             admin == address(0) || address(nft_) == address(0) || address(registry_) == address(0)
-                || address(reserveManager_) == address(0)
+                || address(reserveManager_) == address(0) || address(complianceRegistry_) == address(0)
         ) {
             revert InvalidAddress();
         }
@@ -51,13 +57,16 @@ contract RedemptionManager is
         nft = nft_;
         registry = registry_;
         reserveManager = reserveManager_;
+        complianceRegistry = complianceRegistry_;
     }
 
     function requestRedemption(uint256 tokenId, bytes32 requestHash) external nonReentrant whenNotPaused {
         if (nft.ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+        if (!complianceRegistry.canRedeem(msg.sender)) revert RedemptionNotAllowed();
         uint256 gemId = nft.tokenGem(tokenId);
         if (gemId == 0) revert TokenNotMapped();
         GemRegistry.Gem memory gem = registry.getGem(gemId);
+        reserveManager.requireSolvent();
         reserveManager.requireFunded(gemId, gem.priceUsd);
         nft.setTransferLocked(tokenId, true);
         registry.requestRedemption(gemId, requestHash);

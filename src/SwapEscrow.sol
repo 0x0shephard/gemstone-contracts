@@ -152,6 +152,7 @@ contract SwapEscrow is
         uint256 requestedGemId = nft.tokenGem(offer.requestedTokenId);
         GemRegistry.Gem memory offeredGem = registry.getGem(offeredGemId);
         GemRegistry.Gem memory requestedGem = registry.getGem(requestedGemId);
+        reserveManager.requireSolvent();
         reserveManager.requireFunded(offeredGemId, offeredGem.priceUsd);
         reserveManager.requireFunded(requestedGemId, requestedGem.priceUsd);
 

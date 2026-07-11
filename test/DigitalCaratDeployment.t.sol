@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ComplianceRegistry} from "../src/ComplianceRegistry.sol";
 import {DGENFT} from "../src/DGENFT.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
 import {Marketplace} from "../src/Marketplace.sol";
@@ -41,6 +42,13 @@ contract DigitalCaratDeploymentTest is BaseTest {
                     )
                 ))
         );
+        ComplianceRegistry compliance = ComplianceRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(new ComplianceRegistry()), abi.encodeCall(ComplianceRegistry.initialize, (admin))
+                )
+            )
+        );
         Treasury treasury = Treasury(
             payable(address(
                     new ERC1967Proxy(
@@ -65,7 +73,7 @@ contract DigitalCaratDeploymentTest is BaseTest {
             address(
                 new ERC1967Proxy(
                     address(new RedemptionManager()),
-                    abi.encodeCall(RedemptionManager.initialize, (admin, nft, registry, reserveManager))
+                    abi.encodeCall(RedemptionManager.initialize, (admin, nft, registry, reserveManager, compliance))
                 )
             )
         );
@@ -96,6 +104,7 @@ contract DigitalCaratDeploymentTest is BaseTest {
         treasury.grantRole(Roles.SETTLER_ROLE, address(marketplace));
         reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(sale));
         reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(marketplace));
+        marketplace.setSecondaryFeeRecipient(platform);
 
         payments.setToken(address(0), address(new MockV3Aggregator(8, 2_000e8)), 1 days, true);
         reserveManager.setDefaultReserveBps(500);
@@ -117,5 +126,6 @@ contract DigitalCaratDeploymentTest is BaseTest {
         assertEq(nft.ownerOf(tokenId), buyer);
         assertEq(reserveManager.reserveBalanceUsd(gemId), 50e18);
         assertTrue(swapEscrow.hasRole(Roles.UPGRADER_ROLE, admin));
+        assertTrue(compliance.hasRole(Roles.COMPLIANCE_ROLE, admin));
     }
 }

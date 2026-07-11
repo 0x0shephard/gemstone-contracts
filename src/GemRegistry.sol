@@ -16,7 +16,8 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         Listed,
         Minted,
         RedemptionRequested,
-        Redeemed
+        Redeemed,
+        Withdrawn
     }
 
     struct Gem {
@@ -43,6 +44,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     event RedemptionRequested(uint256 indexed gemId, bytes32 requestHash);
     event RedemptionCancelled(uint256 indexed gemId);
     event GemRedeemed(uint256 indexed gemId);
+    event GemWithdrawn(uint256 indexed gemId, bytes32 reasonHash);
 
     error InvalidAddress();
     error InvalidGem();
@@ -126,6 +128,13 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         gem.tokenId = tokenId;
         gem.status = GemStatus.Minted;
         emit GemMinted(gemId, tokenId);
+    }
+
+    function withdrawListedGem(uint256 gemId, bytes32 reasonHash) external whenNotPaused onlyRole(Roles.LISTER_ROLE) {
+        Gem storage gem = _existingGem(gemId);
+        if (gem.status != GemStatus.Listed) revert InvalidStatus(gem.status);
+        gem.status = GemStatus.Withdrawn;
+        emit GemWithdrawn(gemId, reasonHash);
     }
 
     function requestRedemption(uint256 gemId, bytes32 requestHash)

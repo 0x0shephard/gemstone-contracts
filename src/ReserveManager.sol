@@ -28,18 +28,28 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     mapping(uint256 gemId => uint256 usdAmount) public minimumReserveUsd;
     mapping(uint256 gemId => uint256 usdAmount) public reserveBalanceUsd;
     mapping(uint256 gemId => mapping(address asset => uint256 amount)) public reserveAssetBalance;
+    mapping(uint256 gemId => uint256 usdAmount) public projectedLiabilityUsd;
+    uint256 public totalReserveBalanceUsd;
+    uint256 public totalProjectedLiabilitiesUsd;
+    uint16 public minimumCoverageBps;
+    bool public globalSolvencyCheckEnabled;
 
     event DefaultReserveBpsUpdated(uint16 reserveBps);
     event ReserveBracketsUpdated();
     event MinimumReserveUpdated(uint256 indexed gemId, uint256 minimumReserveUsd);
     event ReserveFunded(uint256 indexed gemId, address indexed asset, uint256 amount, uint256 usdValue);
     event ReserveConsumed(uint256 indexed gemId, uint256 usdValue);
+    event ReserveConsumedFor(uint256 indexed gemId, uint256 usdValue, bytes32 indexed reasonHash);
+    event ProjectedLiabilityUpdated(uint256 indexed gemId, uint256 liabilityUsd);
+    event MinimumCoverageBpsUpdated(uint16 minimumCoverageBps);
+    event GlobalSolvencyCheckUpdated(bool enabled);
 
     error InvalidAddress();
     error InvalidAmount();
     error InvalidReserveBracket();
     error InvalidReserveBps();
     error ReserveShortfall(uint256 requiredUsd, uint256 balanceUsd);
+    error Insolvent(uint256 coverageBps, uint256 minimumCoverageBps);
 
     function initialize(address admin, PaymentTokenRegistry paymentRegistry_) external initializer {
         if (admin == address(0) || address(paymentRegistry_) == address(0)) revert InvalidAddress();
@@ -62,6 +72,23 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     function setMinimumReserveUsd(uint256 gemId, uint256 minimumReserveUsd_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         minimumReserveUsd[gemId] = minimumReserveUsd_;
         emit MinimumReserveUpdated(gemId, minimumReserveUsd_);
+    }
+
+    function setProjectedLiabilityUsd(uint256 gemId, uint256 liabilityUsd) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 previous = projectedLiabilityUsd[gemId];
+        projectedLiabilityUsd[gemId] = liabilityUsd;
+        totalProjectedLiabilitiesUsd = totalProjectedLiabilitiesUsd - previous + liabilityUsd;
+        emit ProjectedLiabilityUpdated(gemId, liabilityUsd);
+    }
+
+    function setMinimumCoverageBps(uint16 minimumCoverageBps_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        minimumCoverageBps = minimumCoverageBps_;
+        emit MinimumCoverageBpsUpdated(minimumCoverageBps_);
+    }
+
+    function setGlobalSolvencyCheckEnabled(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        globalSolvencyCheckEnabled = enabled;
+        emit GlobalSolvencyCheckUpdated(enabled);
     }
 
     function setReserveBrackets(ReserveBracket[] calldata brackets) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -124,11 +151,36 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         whenNotPaused
         onlyRole(Roles.RESERVE_OPERATOR_ROLE)
     {
+        _consumeReserveUsd(gemId, usdValue, bytes32(0));
+    }
+
+    function consumeReserveUsdFor(uint256 gemId, uint256 usdValue, bytes32 reasonHash)
+        external
+        whenNotPaused
+        onlyRole(Roles.RESERVE_OPERATOR_ROLE)
+    {
+        _consumeReserveUsd(gemId, usdValue, reasonHash);
+    }
+
+    function coverageRatioBps() public view returns (uint256) {
+        if (totalProjectedLiabilitiesUsd == 0) return type(uint256).max;
+        return (totalReserveBalanceUsd * BPS_DENOMINATOR) / totalProjectedLiabilitiesUsd;
+    }
+
+    function requireSolvent() external view {
+        if (!globalSolvencyCheckEnabled) return;
+        uint256 coverage = coverageRatioBps();
+        if (coverage < minimumCoverageBps) revert Insolvent(coverage, minimumCoverageBps);
+    }
+
+    function _consumeReserveUsd(uint256 gemId, uint256 usdValue, bytes32 reasonHash) private {
         if (usdValue == 0) revert InvalidAmount();
         uint256 balance = reserveBalanceUsd[gemId];
         if (balance < usdValue) revert ReserveShortfall(usdValue, balance);
         reserveBalanceUsd[gemId] = balance - usdValue;
+        totalReserveBalanceUsd -= usdValue;
         emit ReserveConsumed(gemId, usdValue);
+        emit ReserveConsumedFor(gemId, usdValue, reasonHash);
     }
 
     function requiredReserveUsd(uint256 gemId, uint256 referenceValueUsd) public view returns (uint256 requiredUsd) {
@@ -170,6 +222,7 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     function _recordFunding(uint256 gemId, address asset, uint256 amount, uint256 usdValue) private {
         reserveAssetBalance[gemId][asset] += amount;
         reserveBalanceUsd[gemId] += usdValue;
+        totalReserveBalanceUsd += usdValue;
         emit ReserveFunded(gemId, asset, amount, usdValue);
     }
 

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ComplianceRegistry} from "../src/ComplianceRegistry.sol";
 import {DGENFT} from "../src/DGENFT.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
 import {Marketplace} from "../src/Marketplace.sol";
@@ -20,6 +21,7 @@ contract DeployDigitalCarat is Script {
         GemRegistry registry;
         PaymentTokenRegistry payments;
         ReserveManager reserveManager;
+        ComplianceRegistry compliance;
         Treasury treasury;
         PrimarySaleAuction sale;
         RedemptionManager redemption;
@@ -63,6 +65,13 @@ contract DeployDigitalCarat is Script {
                     )
                 ))
         );
+        deployment.compliance = ComplianceRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(new ComplianceRegistry()), abi.encodeCall(ComplianceRegistry.initialize, (admin))
+                )
+            )
+        );
         deployment.treasury = Treasury(
             payable(address(
                     new ERC1967Proxy(
@@ -104,7 +113,7 @@ contract DeployDigitalCarat is Script {
                     address(new RedemptionManager()),
                     abi.encodeCall(
                         RedemptionManager.initialize,
-                        (admin, deployment.nft, deployment.registry, deployment.reserveManager)
+                        (admin, deployment.nft, deployment.registry, deployment.reserveManager, deployment.compliance)
                     )
                 )
             )
@@ -134,6 +143,12 @@ contract DeployDigitalCarat is Script {
 
         _configurePayments(deployment.payments);
         _configureReservePolicy(deployment.reserveManager);
+        deployment.marketplace.setSecondaryFeeRecipient(platformRecipient);
+        uint256 secondaryFeeBps = vm.envOr("SECONDARY_FEE_BPS", uint256(200));
+        require(secondaryFeeBps <= 10_000, "SECONDARY_FEE_BPS too high");
+        // casting to uint16 is safe because the value is capped at 10_000 above.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        deployment.marketplace.setSecondaryFeeBps(uint16(secondaryFeeBps));
 
         deployment.nft.grantRole(Roles.MINTER_ROLE, address(deployment.sale));
         deployment.nft.grantRole(Roles.BURNER_ROLE, address(deployment.redemption));

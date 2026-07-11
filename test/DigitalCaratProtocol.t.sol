@@ -125,6 +125,76 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(seller.balance, 0.48 ether);
     }
 
+    function testAuctionSettlementRechecksReserveShortfall() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-reserve-recheck");
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+
+        vm.prank(bidder);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        reserveManager.setMinimumReserveUsd(gemId, 100e18);
+        vm.warp(block.timestamp + 1 days);
+
+        vm.expectRevert(PrimarySaleAuction.BidTooLow.selector);
+        sale.settleAuction(gemId);
+
+        vm.prank(bidder);
+        reserveManager.fundNative{value: 0.05 ether}(gemId);
+
+        uint256 tokenId = sale.settleAuction(gemId);
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+    }
+
+    function testAuctionSettlementFundsCurrentReserveShortfallFromEscrow() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-reserve-funded");
+        reserveManager.setMinimumReserveUsd(gemId, 100e18);
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+
+        vm.prank(bidder);
+        sale.bid{value: 0.6 ether}(gemId, address(0), 0.6 ether);
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 tokenId = sale.settleAuction(gemId);
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.reserveAssetBalance(gemId, address(0)), 0.05 ether);
+    }
+
+    function testDailyAuctionUsesTwentyFourHourDuration() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-daily-auction");
+
+        sale.createDailyAuction(gemId, 1_000e18);
+
+        (,, uint64 startTime, uint64 endTime,,,,,,) = sale.auctions(gemId);
+        assertEq(startTime, uint64(block.timestamp));
+        assertEq(endTime, uint64(block.timestamp + 1 days));
+    }
+
+    function testBatchSettlementSkipsIneligibleAuctions() public {
+        uint256 bidGemId = _listedGem(1_000e18, "ipfs://gem-batch-settle");
+        uint256 noBidGemId = _listedGem(1_000e18, "ipfs://gem-batch-skip");
+        sale.createDailyAuction(bidGemId, 1_000e18);
+        sale.createDailyAuction(noBidGemId, 1_000e18);
+
+        vm.prank(bidder);
+        sale.bid{value: 0.5 ether}(bidGemId, address(0), 0.5 ether);
+
+        uint256[] memory gemIds = new uint256[](2);
+        gemIds[0] = bidGemId;
+        gemIds[1] = noBidGemId;
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 settledCount = sale.settleExpiredAuctions(gemIds);
+
+        assertEq(settledCount, 1);
+        assertEq(nft.ownerOf(nft.tokenForGem(bidGemId)), bidder);
+        (bool exists, bool settled,,,,,,,,) = sale.auctions(noBidGemId);
+        assertTrue(exists);
+        assertFalse(settled);
+    }
+
     function testAuctionOutbidDoesNotDependOnInlineNativeRefund() public {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-pin");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
@@ -209,11 +279,11 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.stopPrank();
 
         assertEq(nft.ownerOf(tokenId), bidder);
-        assertEq(usdc.balanceOf(buyer) - buyerUsdcBefore, 800e6);
-        assertEq(usdc.balanceOf(platform), 80e6);
-        assertEq(usdc.balanceOf(vaultReserve), 60e6);
-        assertEq(usdc.balanceOf(insuranceReserve), 40e6);
-        assertEq(usdc.balanceOf(treasuryReserve), 20e6);
+        assertEq(usdc.balanceOf(buyer) - buyerUsdcBefore, 980e6);
+        assertEq(usdc.balanceOf(platform), 20e6);
+        assertEq(usdc.balanceOf(vaultReserve), 0);
+        assertEq(usdc.balanceOf(insuranceReserve), 0);
+        assertEq(usdc.balanceOf(treasuryReserve), 0);
     }
 
     function testMarketplaceBuyerFundsReserveShortfall() public {

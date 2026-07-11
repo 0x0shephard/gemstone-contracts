@@ -30,24 +30,60 @@ contract Marketplace is
         uint256 priceUsd;
     }
 
+    struct Offer {
+        address bidder;
+        uint256 tokenId;
+        address paymentAsset;
+        uint256 amount;
+        uint256 saleUsdValue;
+        uint64 expiry;
+        bool active;
+    }
+
+    uint16 public constant BPS_DENOMINATOR = 10_000;
+    uint64 public constant OFFER_DURATION = 1 days;
+
     DGENFT public nft;
     PaymentTokenRegistry public paymentRegistry;
     ReserveManager public reserveManager;
     Treasury public treasury;
+    uint16 public secondaryFeeBps;
+    address public secondaryFeeRecipient;
+    uint256 private _nextOfferId;
     mapping(uint256 tokenId => Listing) public listings;
+    mapping(uint256 offerId => Offer) public offers;
 
     event Listed(uint256 indexed tokenId, address indexed seller, uint256 priceUsd);
     event ListingCancelled(uint256 indexed tokenId);
     event Purchased(
         uint256 indexed tokenId, address indexed buyer, address paymentAsset, uint256 amount, uint256 usdValue
     );
+    event OfferCreated(
+        uint256 indexed offerId,
+        address indexed bidder,
+        uint256 indexed tokenId,
+        address paymentAsset,
+        uint256 amount,
+        uint256 saleUsdValue,
+        uint64 expiry
+    );
+    event OfferCancelled(uint256 indexed offerId);
+    event OfferAccepted(uint256 indexed offerId, address indexed seller);
+    event SecondaryFeeUpdated(uint16 feeBps);
+    event SecondaryFeeRecipientUpdated(address recipient);
 
     error InvalidAddress();
     error InvalidPrice();
     error NotSeller();
+    error NotBidder();
     error NotListed();
     error PriceNotMet();
     error InvalidAmount();
+    error InvalidFee();
+    error InvalidOffer();
+    error Expired();
+    error NotExpired();
+    error TransferFailed();
 
     function initialize(
         address admin,
@@ -72,6 +108,9 @@ contract Marketplace is
         paymentRegistry = paymentRegistry_;
         reserveManager = reserveManager_;
         treasury = treasury_;
+        secondaryFeeBps = 200;
+        secondaryFeeRecipient = admin;
+        _nextOfferId = 1;
     }
 
     function list(uint256 tokenId, uint256 priceUsd) external nonReentrant whenNotPaused {
@@ -95,6 +134,7 @@ contract Marketplace is
         if (listing.seller == address(0)) revert NotListed();
         delete listings[tokenId];
 
+        reserveManager.requireSolvent();
         uint256 received = _collectPayment(paymentAsset, amount);
         uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
         uint256 gemId = nft.tokenGem(tokenId);
@@ -107,9 +147,88 @@ contract Marketplace is
             reserveManager.requireFunded(gemId, listing.priceUsd);
         }
 
-        _settle(paymentAsset, listing.seller, saleAmount);
+        _settleSecondary(paymentAsset, listing.seller, saleAmount);
         nft.safeTransferFrom(address(this), msg.sender, tokenId);
         emit Purchased(tokenId, msg.sender, paymentAsset, received, usdValue);
+    }
+
+    function createOffer(uint256 tokenId, address paymentAsset, uint256 amount)
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        returns (uint256 offerId)
+    {
+        nft.ownerOf(tokenId);
+        reserveManager.requireSolvent();
+        uint256 received = _collectPayment(paymentAsset, amount);
+        uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
+        uint256 gemId = nft.tokenGem(tokenId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, usdValue);
+        if (usdValue <= reserveUsd) revert PriceNotMet();
+        uint256 saleUsdValue = usdValue - reserveUsd;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint64 expiry = uint64(block.timestamp + OFFER_DURATION);
+
+        offerId = _nextOfferId++;
+        offers[offerId] = Offer({
+            bidder: msg.sender,
+            tokenId: tokenId,
+            paymentAsset: paymentAsset,
+            amount: received,
+            saleUsdValue: saleUsdValue,
+            expiry: expiry,
+            active: true
+        });
+
+        emit OfferCreated(offerId, msg.sender, tokenId, paymentAsset, received, saleUsdValue, expiry);
+    }
+
+    function cancelExpiredOffer(uint256 offerId) external nonReentrant {
+        Offer memory offer = offers[offerId];
+        if (!offer.active) revert InvalidOffer();
+        if (block.timestamp <= offer.expiry) revert NotExpired();
+        delete offers[offerId];
+        _sendPayment(offer.bidder, offer.paymentAsset, offer.amount);
+        emit OfferCancelled(offerId);
+    }
+
+    function acceptOffer(uint256 offerId) external nonReentrant whenNotPaused {
+        Offer memory offer = offers[offerId];
+        if (!offer.active) revert InvalidOffer();
+        if (block.timestamp > offer.expiry) revert Expired();
+        if (nft.ownerOf(offer.tokenId) != msg.sender) revert NotSeller();
+        delete offers[offerId];
+
+        reserveManager.requireSolvent();
+        uint256 gemId = nft.tokenGem(offer.tokenId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, offer.saleUsdValue);
+        uint256 requiredUsd = offer.saleUsdValue + reserveUsd;
+        uint256 currentEscrowUsd = paymentRegistry.quoteTokenToUsd(offer.paymentAsset, offer.amount);
+        if (currentEscrowUsd < requiredUsd) revert PriceNotMet();
+
+        uint256 saleAmount = _proRataAmount(offer.amount, offer.saleUsdValue, requiredUsd);
+        uint256 reserveAmount = offer.amount - saleAmount;
+        if (reserveAmount != 0) {
+            _fundReserve(gemId, offer.paymentAsset, reserveAmount);
+            reserveManager.requireFunded(gemId, offer.saleUsdValue);
+        }
+
+        _settleSecondary(offer.paymentAsset, msg.sender, saleAmount);
+        nft.safeTransferFrom(msg.sender, offer.bidder, offer.tokenId);
+        emit OfferAccepted(offerId, msg.sender);
+    }
+
+    function setSecondaryFeeBps(uint16 feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (feeBps > BPS_DENOMINATOR) revert InvalidFee();
+        secondaryFeeBps = feeBps;
+        emit SecondaryFeeUpdated(feeBps);
+    }
+
+    function setSecondaryFeeRecipient(address recipient) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (recipient == address(0)) revert InvalidAddress();
+        secondaryFeeRecipient = recipient;
+        emit SecondaryFeeRecipientUpdated(recipient);
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -138,17 +257,18 @@ contract Marketplace is
         if (received == 0) revert InvalidAmount();
     }
 
-    function _settle(address paymentAsset, address seller, uint256 amount) private {
+    function _settleSecondary(address paymentAsset, address seller, uint256 amount) private {
         if (amount == 0) return;
+        uint256 feeAmount = (amount * secondaryFeeBps) / BPS_DENOMINATOR;
+        uint256 sellerAmount = amount - feeAmount;
         if (paymentAsset == address(0)) {
-            treasury.settleNative{value: amount}(seller);
+            _sendPayment(seller, paymentAsset, sellerAmount);
+            _sendPayment(secondaryFeeRecipient, paymentAsset, feeAmount);
             return;
         }
 
-        uint256 beforeBalance = IERC20(paymentAsset).balanceOf(address(treasury));
-        IERC20(paymentAsset).safeTransfer(address(treasury), amount);
-        uint256 receivedByTreasury = IERC20(paymentAsset).balanceOf(address(treasury)) - beforeBalance;
-        treasury.settleToken(paymentAsset, seller, receivedByTreasury);
+        _sendPayment(seller, paymentAsset, sellerAmount);
+        _sendPayment(secondaryFeeRecipient, paymentAsset, feeAmount);
     }
 
     function _fundReserve(uint256 gemId, address paymentAsset, uint256 amount) private {
@@ -168,6 +288,16 @@ contract Marketplace is
     function _proRataAmount(uint256 amount, uint256 shareUsd, uint256 totalUsd) private pure returns (uint256) {
         if (shareUsd == 0) return 0;
         return (amount * shareUsd) / totalUsd;
+    }
+
+    function _sendPayment(address to, address paymentAsset, uint256 amount) private {
+        if (amount == 0) return;
+        if (paymentAsset == address(0)) {
+            (bool ok,) = payable(to).call{value: amount}("");
+            if (!ok) revert TransferFailed();
+            return;
+        }
+        IERC20(paymentAsset).safeTransfer(to, amount);
     }
 
     receive() external payable {}

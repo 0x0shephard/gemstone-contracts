@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {ComplianceRegistry} from "../src/ComplianceRegistry.sol";
 import {DGENFT} from "../src/DGENFT.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
 import {Marketplace} from "../src/Marketplace.sol";
@@ -21,6 +22,7 @@ abstract contract BaseTest is Test {
     PaymentTokenRegistry internal payments;
     Treasury internal treasury;
     ReserveManager internal reserveManager;
+    ComplianceRegistry internal compliance;
     PrimarySaleAuction internal sale;
     RedemptionManager internal redemption;
     Marketplace internal marketplace;
@@ -56,6 +58,7 @@ abstract contract BaseTest is Test {
         payments = new PaymentTokenRegistry();
         treasury = new Treasury();
         reserveManager = new ReserveManager();
+        compliance = new ComplianceRegistry();
         sale = new PrimarySaleAuction();
         redemption = new RedemptionManager();
         marketplace = new Marketplace();
@@ -65,10 +68,12 @@ abstract contract BaseTest is Test {
         registry.initialize(admin);
         payments.initialize(admin);
         reserveManager.initialize(admin, payments);
+        compliance.initialize(admin);
         treasury.initialize(admin, platform, vaultReserve, insuranceReserve, treasuryReserve);
         sale.initialize(admin, nft, registry, payments, reserveManager, treasury);
-        redemption.initialize(admin, nft, registry, reserveManager);
+        redemption.initialize(admin, nft, registry, reserveManager, compliance);
         marketplace.initialize(admin, nft, payments, reserveManager, treasury);
+        marketplace.setSecondaryFeeRecipient(platform);
         swapEscrow.initialize(admin, nft, registry, payments, reserveManager);
     }
 

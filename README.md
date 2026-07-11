@@ -18,7 +18,9 @@ Core modules:
 - `SwapEscrow`
 - `RedemptionManager`
 
-See [docs/current-smart-contract-architecture.md](docs/current-smart-contract-architecture.md) for the current architecture.
+See [docs/current-smart-contract-architecture.md](docs/current-smart-contract-architecture.md) for the current smart contract architecture.
+
+See [docs/off-chain-data-architecture.md](docs/off-chain-data-architecture.md) for the recommended backend, metadata, and private data storage model.
 
 ## Build And Test
 
@@ -58,6 +60,7 @@ PLATFORM_RECIPIENT=
 VAULT_RESERVE_RECIPIENT=
 INSURANCE_RESERVE_RECIPIENT=
 TREASURY_RESERVE_RECIPIENT=
+SECONDARY_FEE_BPS=200
 PAYMENT_TOKENS=0xToken1,0xToken2
 PAYMENT_TOKEN_USD_FEEDS=0xFeed1,0xFeed2
 ```
@@ -69,6 +72,7 @@ Notes:
 - Reserve bracket values are 18-decimal USD values.
 - Bracket minimums are inferred from zero and the previous bracket max.
 - Recipient env vars default to the deployer if omitted.
+- `SECONDARY_FEE_BPS` defaults to `200` when omitted.
 
 ## Dependency Policy
 
