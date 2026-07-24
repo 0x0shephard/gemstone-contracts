@@ -70,6 +70,7 @@ contract PrimarySaleAuction is
     );
     event RefundCredited(address indexed account, address indexed asset, uint256 amount);
     event RefundClaimed(address indexed account, address indexed asset, uint256 amount);
+    event PaymentSurplusRefunded(address indexed account, address indexed asset, uint256 amount);
     event AuctionSettlementSkipped(uint256 indexed gemId, bytes reason);
 
     error InvalidAddress();
@@ -80,6 +81,7 @@ contract PrimarySaleAuction is
     error AuctionNotEnded();
     error BidTooLow();
     error GemNotMintable();
+    error WrongPrimarySaleMode();
     error TransferFailed();
     error BatchTooLarge();
 
@@ -128,7 +130,7 @@ contract PrimarySaleAuction is
     /// @dev Buyer must pay at least gem price plus reserve shortfall.
     /// @param gemId Listed gem id.
     /// @param paymentAsset Payment asset, or address(0) for native ETH.
-    /// @param amount Payment amount; must equal `msg.value` for native ETH.
+    /// @param amount Maximum payment amount; must equal `msg.value` for native ETH.
     /// @return tokenId Minted token id.
     function buyNow(uint256 gemId, address paymentAsset, uint256 amount)
         external
@@ -138,15 +140,26 @@ contract PrimarySaleAuction is
         returns (uint256 tokenId)
     {
         if (!registry.canMint(gemId)) revert GemNotMintable();
+        if (registry.primarySaleMode(gemId) != GemRegistry.PrimarySaleMode.BuyNow) {
+            revert WrongPrimarySaleMode();
+        }
         reserveManager.requireSolvent();
         GemRegistry.Gem memory gem = registry.getGem(gemId);
 
-        uint256 received = _collectPayment(paymentAsset, amount);
-        uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
-        if (usdValue < gem.priceUsd + reserveUsd) revert BidTooLow();
-        uint256 reserveAmount = _proRataAmountRoundUp(received, reserveUsd, usdValue);
-        uint256 saleAmount = received - reserveAmount;
+        uint256 requiredUsd = gem.priceUsd + reserveUsd;
+        uint256 requiredAmount = paymentRegistry.quoteUsdToToken(paymentAsset, requiredUsd);
+        uint256 received = _collectPayment(paymentAsset, amount);
+        if (received < requiredAmount) revert BidTooLow();
+        uint256 surplus = received - requiredAmount;
+        if (surplus != 0) {
+            _refund(msg.sender, paymentAsset, surplus);
+            emit PaymentSurplusRefunded(msg.sender, paymentAsset, surplus);
+        }
+
+        uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, requiredAmount);
+        uint256 reserveAmount = _proRataAmountRoundUp(requiredAmount, reserveUsd, requiredUsd);
+        uint256 saleAmount = requiredAmount - reserveAmount;
         if (reserveAmount != 0) {
             _fundReserve(gemId, paymentAsset, reserveAmount);
             reserveManager.requireFunded(gemId, gem.priceUsd);
@@ -157,7 +170,7 @@ contract PrimarySaleAuction is
         reserveManager.syncProjectedLiabilityUsd(gemId, gem.priceUsd);
         _settle(paymentAsset, gem.seller, saleAmount);
 
-        emit BuyNow(gemId, tokenId, msg.sender, paymentAsset, received, usdValue);
+        emit BuyNow(gemId, tokenId, msg.sender, paymentAsset, requiredAmount, usdValue);
     }
 
     /// @notice Creates a scheduled primary auction for a listed gem.
@@ -186,6 +199,9 @@ contract PrimarySaleAuction is
     /// @dev Validates and stores auction state.
     function _createAuction(uint256 gemId, uint256 floorUsd, uint64 startTime, uint64 endTime) private {
         if (!registry.canMint(gemId)) revert GemNotMintable();
+        if (registry.primarySaleMode(gemId) != GemRegistry.PrimarySaleMode.Auction) {
+            revert WrongPrimarySaleMode();
+        }
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         if (floorUsd == 0 || endTime <= startTime || endTime <= block.timestamp) revert InvalidAuction();
         if (floorUsd < gem.priceUsd) revert InvalidAuction();

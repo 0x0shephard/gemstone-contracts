@@ -33,6 +33,29 @@ contract PaymentArithmeticFuzzTest is BaseTest {
         }
     }
 
+    function testFuzz_quoteUsdToTokenRoundsUpAndCoversQuote(
+        uint8 tokenDecimalsSeed,
+        uint8 feedDecimalsSeed,
+        uint256 usdValueSeed,
+        uint256 answerSeed
+    ) public {
+        uint8 tokenDecimals = uint8(bound(tokenDecimalsSeed, 0, 18));
+        uint8 feedDecimals = uint8(bound(feedDecimalsSeed, 0, 18));
+        uint256 usdValue = bound(usdValueSeed, 1, 1e30);
+        int256 answer = int256(bound(answerSeed, 1, 1e20));
+
+        MockERC20 token = new MockERC20("Inverse Quote Token", "IQT", tokenDecimals);
+        MockV3Aggregator feed = new MockV3Aggregator(feedDecimals, answer);
+        payments.setToken(address(token), address(feed), 1 days, true);
+
+        uint256 tokenAmount = payments.quoteUsdToToken(address(token), usdValue);
+        assertGe(payments.quoteTokenToUsd(address(token), tokenAmount), usdValue);
+        if (tokenAmount > 1) {
+            uint256 previousQuote = payments.quoteTokenToUsd(address(token), tokenAmount - 1);
+            assertLt(previousQuote, usdValue);
+        }
+    }
+
     function testFuzz_buyNowReserveFundingCoversRequiredReserve(uint256 priceSeed, uint16 reserveBpsSeed) public {
         uint256 priceUsd = bound(priceSeed, 100, 1_000_000) * 1e18;
         uint16 reserveBps = uint16(bound(reserveBpsSeed, 1, 5_000));

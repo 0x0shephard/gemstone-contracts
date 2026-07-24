@@ -71,6 +71,7 @@ contract Marketplace is
     );
     event OfferCancelled(uint256 indexed offerId);
     event OfferAccepted(uint256 indexed offerId, address indexed seller);
+    event PaymentSurplusRefunded(address indexed account, address indexed asset, uint256 amount);
     event SecondaryFeeUpdated(uint16 feeBps);
     event SecondaryFeeRecipientUpdated(address recipient);
 
@@ -161,31 +162,52 @@ contract Marketplace is
     /// @dev Buyer must pay listing price plus any reserve shortfall.
     /// @param tokenId Listed token id.
     /// @param paymentAsset Payment asset, or address(0) for native ETH.
-    /// @param amount Payment amount; must equal `msg.value` for native ETH.
+    /// @param amount Maximum payment amount; must equal `msg.value` for native ETH.
     function buy(uint256 tokenId, address paymentAsset, uint256 amount) external payable nonReentrant whenNotPaused {
         Listing memory listing = listings[tokenId];
         if (listing.seller == address(0)) revert NotListed();
         delete listings[tokenId];
 
         reserveManager.requireSolvent();
-        uint256 received = _collectPayment(paymentAsset, amount);
-        uint256 usdValue = paymentRegistry.quoteTokenToUsd(paymentAsset, received);
         uint256 gemId = nft.tokenGem(tokenId);
         _requireMintedGemId(gemId);
-        GemRegistry.Gem memory gem = registry.getGem(gemId);
-        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
-        if (usdValue < listing.priceUsd + reserveUsd) revert PriceNotMet();
-        uint256 reserveAmount = _proRataAmountRoundUp(received, reserveUsd, usdValue);
-        uint256 saleAmount = received - reserveAmount;
+        uint256 gemPriceUsd = registry.getGem(gemId).priceUsd;
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gemPriceUsd);
+        uint256 requiredAmount = _collectFixedPayment(paymentAsset, amount, listing.priceUsd + reserveUsd);
+
+        uint256 reserveAmount = _proRataAmountRoundUp(requiredAmount, reserveUsd, listing.priceUsd + reserveUsd);
         if (reserveAmount != 0) {
             _fundReserve(gemId, paymentAsset, reserveAmount);
-            reserveManager.requireFunded(gemId, gem.priceUsd);
+            reserveManager.requireFunded(gemId, gemPriceUsd);
         }
 
-        reserveManager.syncProjectedLiabilityUsd(gemId, gem.priceUsd);
-        _settleSecondary(paymentAsset, listing.seller, saleAmount);
+        reserveManager.syncProjectedLiabilityUsd(gemId, gemPriceUsd);
+        _settleSecondary(paymentAsset, listing.seller, requiredAmount - reserveAmount);
         nft.safeTransferFrom(address(this), msg.sender, tokenId);
-        emit Purchased(tokenId, msg.sender, paymentAsset, received, usdValue);
+        emit Purchased(
+            tokenId,
+            msg.sender,
+            paymentAsset,
+            requiredAmount,
+            paymentRegistry.quoteTokenToUsd(paymentAsset, requiredAmount)
+        );
+    }
+
+    function _collectFixedPayment(address paymentAsset, uint256 maximumAmount, uint256 requiredUsd)
+        private
+        returns (uint256 requiredAmount)
+    {
+        requiredAmount = paymentRegistry.quoteUsdToToken(paymentAsset, requiredUsd);
+        uint256 received = _collectPayment(paymentAsset, maximumAmount);
+        if (received < requiredAmount) revert PriceNotMet();
+        _refundSurplus(paymentAsset, received, requiredAmount);
+    }
+
+    function _refundSurplus(address paymentAsset, uint256 received, uint256 requiredAmount) private {
+        uint256 surplus = received - requiredAmount;
+        if (surplus == 0) return;
+        _sendPayment(msg.sender, paymentAsset, surplus);
+        emit PaymentSurplusRefunded(msg.sender, paymentAsset, surplus);
     }
 
     /// @notice Creates a 24-hour escrowed offer for a minted NFT.

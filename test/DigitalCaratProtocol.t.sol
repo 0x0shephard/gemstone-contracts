@@ -37,6 +37,32 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(uint256(gem.status), uint256(GemRegistry.GemStatus.Minted));
     }
 
+    function testBuyNowRefundsExcessNativeEth() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-native-refund");
+        uint256 buyerBefore = buyer.balance;
+
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.75 ether}(gemId, address(0), 0.75 ether);
+
+        assertEq(nft.ownerOf(tokenId), buyer);
+        assertEq(buyerBefore - buyer.balance, 0.5 ether);
+        assertEq(address(sale).balance, 0);
+    }
+
+    function testBuyNowRefundsExcessUsdc() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-usdc-refund");
+        uint256 buyerBefore = usdc.balanceOf(buyer);
+
+        vm.startPrank(buyer);
+        usdc.approve(address(sale), 1_250e6);
+        uint256 tokenId = sale.buyNow(gemId, address(usdc), 1_250e6);
+        vm.stopPrank();
+
+        assertEq(nft.ownerOf(tokenId), buyer);
+        assertEq(buyerBefore - usdc.balanceOf(buyer), 1_000e6);
+        assertEq(usdc.balanceOf(address(sale)), 0);
+    }
+
     function testFeeOnTransferTokenUsesActualReceivedForPricing() public {
         uint256 gemId = _listedGem(900e18, "ipfs://gem-fee");
         uint256 paymentAmount = 1_000e18;
@@ -364,6 +390,46 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(usdc.balanceOf(vaultReserve), 0);
         assertEq(usdc.balanceOf(insuranceReserve), 0);
         assertEq(usdc.balanceOf(treasuryReserve), 0);
+    }
+
+    function testMarketplaceRefundsExcessNativeEth() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market-native-refund");
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_000e18);
+        vm.stopPrank();
+
+        uint256 bidderBefore = bidder.balance;
+        vm.prank(bidder);
+        marketplace.buy{value: 0.75 ether}(tokenId, address(0), 0.75 ether);
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(bidderBefore - bidder.balance, 0.5 ether);
+        assertEq(address(marketplace).balance, 0);
+    }
+
+    function testMarketplaceRefundsExcessUsdc() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market-usdc-refund");
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_000e18);
+        vm.stopPrank();
+
+        uint256 bidderBefore = usdc.balanceOf(bidder);
+        vm.startPrank(bidder);
+        usdc.approve(address(marketplace), 1_250e6);
+        marketplace.buy(tokenId, address(usdc), 1_250e6);
+        vm.stopPrank();
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(bidderBefore - usdc.balanceOf(bidder), 1_000e6);
+        assertEq(usdc.balanceOf(address(marketplace)), 0);
     }
 
     function testMarketplaceBuyerFundsReserveShortfall() public {

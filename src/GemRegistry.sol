@@ -20,6 +20,12 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         Withdrawn
     }
 
+    enum PrimarySaleMode {
+        None,
+        BuyNow,
+        Auction
+    }
+
     struct Gem {
         address seller;
         address custodian;
@@ -34,12 +40,22 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     uint256 private _nextGemId;
     mapping(uint256 gemId => Gem) private _gems;
     mapping(address seller => bool) public sellerApproved;
+    mapping(uint256 gemId => bytes32 hash) public valuationHash;
+    mapping(uint256 gemId => bytes32 hash) public valuationMatrixHash;
+    mapping(uint256 gemId => uint256 priceUsd) public approvedValuationUsd;
+    mapping(uint256 gemId => PrimarySaleMode mode) public primarySaleMode;
 
     event SellerApprovalUpdated(address indexed seller, bool approved);
     event GemRegistered(uint256 indexed gemId, address indexed seller, address indexed custodian);
     event CustodyConfirmed(uint256 indexed gemId);
-    event GemVerified(uint256 indexed gemId);
-    event GemListed(uint256 indexed gemId, uint256 priceUsd);
+    event GemVerified(
+        uint256 indexed gemId,
+        address indexed verifier,
+        bytes32 indexed valuationHash,
+        bytes32 valuationMatrixHash,
+        uint256 approvedValuationUsd
+    );
+    event GemListed(uint256 indexed gemId, uint256 priceUsd, PrimarySaleMode saleMode);
     event GemMinted(uint256 indexed gemId, uint256 indexed tokenId);
     event RedemptionRequested(uint256 indexed gemId, bytes32 requestHash);
     event RedemptionCancelled(uint256 indexed gemId);
@@ -52,6 +68,9 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     error SellerNotApproved();
     error InvalidPrice();
     error NotGemCustodian();
+    error InvalidValuationCommitment();
+    error ValuationPriceMismatch(uint256 approvedPriceUsd, uint256 requestedPriceUsd);
+    error InvalidPrimarySaleMode();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -127,28 +146,53 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         emit CustodyConfirmed(gemId);
     }
 
-    /// @notice Marks a custody-confirmed gem as verified.
-    /// @dev Callable only by `VERIFIER_ROLE`.
+    /// @notice Records a versioned valuation commitment and marks a custody-confirmed gem as verified.
+    /// @dev Callable only by `VERIFIER_ROLE`; the approved valuation becomes the only valid primary listing price.
     /// @param gemId Gem id to verify.
-    function verifyGem(uint256 gemId) external whenNotPaused onlyRole(Roles.VERIFIER_ROLE) {
+    /// @param valuationHash_ Commitment to the complete approved valuation decision.
+    /// @param valuationMatrixHash_ Commitment to the exact pricing matrix/version used.
+    /// @param approvedValuationUsd_ Expert-approved valuation in 18-decimal USD.
+    function verifyGem(
+        uint256 gemId,
+        bytes32 valuationHash_,
+        bytes32 valuationMatrixHash_,
+        uint256 approvedValuationUsd_
+    ) external whenNotPaused onlyRole(Roles.VERIFIER_ROLE) {
+        if (
+            valuationHash_ == bytes32(0) || valuationMatrixHash_ == bytes32(0) || approvedValuationUsd_ == 0
+        ) {
+            revert InvalidValuationCommitment();
+        }
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.CustodyConfirmed) revert InvalidStatus(gem.status);
+        valuationHash[gemId] = valuationHash_;
+        valuationMatrixHash[gemId] = valuationMatrixHash_;
+        approvedValuationUsd[gemId] = approvedValuationUsd_;
         gem.status = GemStatus.Verified;
-        emit GemVerified(gemId);
+        emit GemVerified(gemId, msg.sender, valuationHash_, valuationMatrixHash_, approvedValuationUsd_);
     }
 
     /// @notice Lists a verified gem for primary sale.
-    /// @dev Seller must be approved and `priceUsd` is 18-decimal USD value.
+    /// @dev Seller must be approved and `priceUsd` must equal the verifier-approved valuation.
     /// @param gemId Gem id to list.
     /// @param priceUsd Primary sale price in 18-decimal USD.
-    function listGem(uint256 gemId, uint256 priceUsd) external whenNotPaused onlyRole(Roles.LISTER_ROLE) {
+    /// @param saleMode Exclusive primary sale mode selected during seller intake.
+    function listGem(uint256 gemId, uint256 priceUsd, PrimarySaleMode saleMode)
+        external
+        whenNotPaused
+        onlyRole(Roles.LISTER_ROLE)
+    {
         if (priceUsd == 0) revert InvalidPrice();
+        if (saleMode == PrimarySaleMode.None) revert InvalidPrimarySaleMode();
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.Verified) revert InvalidStatus(gem.status);
         if (!sellerApproved[gem.seller]) revert SellerNotApproved();
+        uint256 approvedPriceUsd = approvedValuationUsd[gemId];
+        if (priceUsd != approvedPriceUsd) revert ValuationPriceMismatch(approvedPriceUsd, priceUsd);
         gem.priceUsd = priceUsd;
+        primarySaleMode[gemId] = saleMode;
         gem.status = GemStatus.Listed;
-        emit GemListed(gemId, priceUsd);
+        emit GemListed(gemId, priceUsd, saleMode);
     }
 
     /// @notice Records that a listed gem has been minted into an NFT.

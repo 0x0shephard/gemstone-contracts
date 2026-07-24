@@ -5,6 +5,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {
     AggregatorV3Interface
 } from "chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
@@ -111,21 +112,43 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
     /// @return usdValue 18-decimal USD value.
     function quoteTokenToUsd(address token, uint256 amount) public view returns (uint256 usdValue) {
         TokenConfig memory config = tokenConfig[token];
+        (uint256 answer, uint8 feedDecimals) = _validatedPrice(config);
+        usdValue = Math.mulDiv(amount, answer * USD_DECIMALS, (10 ** config.tokenDecimals) * (10 ** feedDecimals));
+        if (usdValue == 0) revert InvalidPrice();
+    }
+
+    /// @notice Returns the minimum token amount whose oracle quote covers a USD value.
+    /// @dev Rounds up so fixed-price callers never underpay because of integer truncation.
+    /// @param token Payment token address, or address(0) for native ETH.
+    /// @param usdValue Required 18-decimal USD value.
+    /// @return tokenAmount Minimum amount in the token's native decimals.
+    function quoteUsdToToken(address token, uint256 usdValue) public view returns (uint256 tokenAmount) {
+        if (usdValue == 0) revert InvalidPrice();
+        TokenConfig memory config = tokenConfig[token];
+        (uint256 answer, uint8 feedDecimals) = _validatedPrice(config);
+        tokenAmount = Math.mulDiv(
+            usdValue, (10 ** config.tokenDecimals) * (10 ** feedDecimals), answer * USD_DECIMALS, Math.Rounding.Ceil
+        );
+        if (tokenAmount == 0) revert InvalidPrice();
+    }
+
+    function _validatedPrice(TokenConfig memory config) private view returns (uint256 answer, uint8 feedDecimals) {
         if (!config.enabled) revert TokenNotEnabled();
 
         AggregatorV3Interface feed = AggregatorV3Interface(config.feed);
-        (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
+        (uint80 roundId, int256 signedAnswer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
             feed.latestRoundData();
         if (roundId == 0 || startedAt == 0 || updatedAt == 0 || answeredInRound < roundId) revert StalePrice();
-        if (answer <= 0) revert InvalidPrice();
-        if (config.maxAnswer != 0 && (answer < config.minAnswer || answer > config.maxAnswer)) revert InvalidPrice();
+        if (signedAnswer <= 0) revert InvalidPrice();
+        if (config.maxAnswer != 0 && (signedAnswer < config.minAnswer || signedAnswer > config.maxAnswer)) {
+            revert InvalidPrice();
+        }
         if (block.timestamp - updatedAt >= config.staleAfter) revert StalePrice();
 
-        uint8 feedDecimals = feed.decimals();
-        // casting to uint256 is safe because non-positive oracle answers are rejected above.
+        // casting is safe because non-positive oracle answers are rejected above.
         // forge-lint: disable-next-line(unsafe-typecast)
-        usdValue = (amount * uint256(answer) * USD_DECIMALS) / (10 ** config.tokenDecimals) / (10 ** feedDecimals);
-        if (usdValue == 0) revert InvalidPrice();
+        answer = uint256(signedAnswer);
+        feedDecimals = feed.decimals();
     }
 
     /// @dev Authorizes UUPS upgrades for `UPGRADER_ROLE` holders.
