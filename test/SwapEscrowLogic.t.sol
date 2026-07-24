@@ -136,4 +136,30 @@ contract SwapEscrowLogicTest is BaseTest {
         assertEq(nft.ownerOf(secondTokenId), buyer);
         assertEq(usdc.balanceOf(bidder) - bidderBefore, 100e6);
     }
+
+    function testProposerPaysBranchRejectsStrayNativeValue() public {
+        (, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-stray-native-a");
+        (, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-stray-native-b");
+
+        vm.startPrank(buyer);
+        nft.approve(address(swapEscrow), firstTokenId);
+        uint256 offerId = swapEscrow.createOffer{value: 0.1 ether}(
+            firstTokenId, secondTokenId, address(0), 0.1 ether, true, uint64(block.timestamp + 1 days)
+        );
+        vm.stopPrank();
+
+        vm.startPrank(bidder);
+        nft.approve(address(swapEscrow), secondTokenId);
+        vm.expectRevert(SwapEscrow.InvalidAmount.selector);
+        swapEscrow.acceptOffer{value: 0.01 ether}(offerId);
+        assertEq(nft.ownerOf(firstTokenId), address(swapEscrow));
+        assertEq(nft.ownerOf(secondTokenId), bidder);
+
+        swapEscrow.acceptOffer(offerId);
+        vm.stopPrank();
+
+        assertEq(address(swapEscrow).balance, 0);
+        assertEq(nft.ownerOf(firstTokenId), bidder);
+        assertEq(nft.ownerOf(secondTokenId), buyer);
+    }
 }

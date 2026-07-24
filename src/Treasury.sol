@@ -27,11 +27,14 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
     address public vaultReserveRecipient;
     address public insuranceReserveRecipient;
     address public treasuryReserveRecipient;
+    mapping(address account => uint256 amount) public pendingNative;
 
     event RecipientsUpdated(address platform, address vaultReserve, address insuranceReserve, address treasuryReserve);
     event SplitsUpdated(Splits splits);
     event SaleSettled(address indexed asset, address indexed seller, uint256 amount);
     event Distribution(address indexed asset, address indexed recipient, uint256 grossAmount, uint256 netReceived);
+    event NativePayoutAccrued(address indexed recipient, uint256 amount);
+    event NativePayoutClaimed(address indexed account, address indexed recipient, uint256 amount);
 
     error InvalidAddress();
     error InvalidSplits();
@@ -113,6 +116,20 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         emit SaleSettled(address(0), seller, msg.value);
     }
 
+    /// @notice Claims the caller's accrued native proceeds to a chosen recipient.
+    /// @dev A configurable recipient contract that rejects ETH can route its claim to another address.
+    /// @param recipient Address receiving the accrued native proceeds.
+    function claimNative(address payable recipient) external {
+        if (recipient == address(0)) revert InvalidAddress();
+        uint256 amount = pendingNative[msg.sender];
+        if (amount == 0) revert InsufficientBalance();
+        pendingNative[msg.sender] = 0;
+        (bool ok,) = recipient.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+        emit NativePayoutClaimed(msg.sender, recipient, amount);
+        emit Distribution(address(0), recipient, amount, amount);
+    }
+
     /// @notice Pulls and distributes ERC-20 sale proceeds according to current treasury splits.
     /// @dev Caller must have `SETTLER_ROLE` and approve this contract for `amount`.
     /// @param token ERC-20 asset to settle.
@@ -177,7 +194,7 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         return (total * bps) / BPS_DENOMINATOR;
     }
 
-    /// @dev Distributes native proceeds to all configured recipients.
+    /// @dev Accrues native proceeds for pull-based withdrawal by every recipient.
     function _distributeNative(address seller, uint256 amount) private {
         if (seller == address(0)) revert InvalidAddress();
         Splits memory s = splits;
@@ -187,16 +204,11 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         uint256 insuranceAmount = _amount(amount, s.insuranceReserveBps);
         uint256 treasuryAmount = amount - sellerAmount - platformAmount - vaultAmount - insuranceAmount;
 
-        _sendNative(seller, sellerAmount);
-        emit Distribution(address(0), seller, sellerAmount, sellerAmount);
-        _sendNative(platformRecipient, platformAmount);
-        emit Distribution(address(0), platformRecipient, platformAmount, platformAmount);
-        _sendNative(vaultReserveRecipient, vaultAmount);
-        emit Distribution(address(0), vaultReserveRecipient, vaultAmount, vaultAmount);
-        _sendNative(insuranceReserveRecipient, insuranceAmount);
-        emit Distribution(address(0), insuranceReserveRecipient, insuranceAmount, insuranceAmount);
-        _sendNative(treasuryReserveRecipient, treasuryAmount);
-        emit Distribution(address(0), treasuryReserveRecipient, treasuryAmount, treasuryAmount);
+        _accrueNative(seller, sellerAmount);
+        _accrueNative(platformRecipient, platformAmount);
+        _accrueNative(vaultReserveRecipient, vaultAmount);
+        _accrueNative(insuranceReserveRecipient, insuranceAmount);
+        _accrueNative(treasuryReserveRecipient, treasuryAmount);
     }
 
     /// @dev Distributes ERC-20 proceeds to all configured recipients.
@@ -228,11 +240,11 @@ contract Treasury is Initializable, AccessControlUpgradeable, UUPSUpgradeable, P
         emit Distribution(token, to, amount, netReceived);
     }
 
-    /// @dev Sends native ETH to a recipient.
-    function _sendNative(address to, uint256 amount) private {
+    /// @dev Credits native proceeds without invoking recipient code during settlement.
+    function _accrueNative(address to, uint256 amount) private {
         if (amount == 0) return;
-        (bool ok,) = payable(to).call{value: amount}("");
-        if (!ok) revert TransferFailed();
+        pendingNative[to] += amount;
+        emit NativePayoutAccrued(to, amount);
     }
 
     receive() external payable {}

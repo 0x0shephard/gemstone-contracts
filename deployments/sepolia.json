@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "deploymentBlock": 11342041,
+  "lastDeploymentBlock": 11342088,
+  "admin": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+  "addresses": {
+    "DGENFT": "0x40FE3f22f2B6Ea5e0436f56c0d821bEF8D4c39f6",
+    "GemRegistry": "0xC46D6870B7298b4cf0BcbcD1feC563EBC887cB2d",
+    "PaymentTokenRegistry": "0x7eF14F3994c10Fa773A02dD2509708C4375612bA",
+    "ReserveManager": "0x2143D4242ac10EEBB07bD59b3CAb16480e017c63",
+    "ComplianceRegistry": "0x5903f96325b049EBCed8b52d17ECF059490125b0",
+    "Treasury": "0x931aE34399Ce639eB548273EB0eF16A59061b62a",
+    "PrimarySaleAuction": "0xCBF8E2596680de83121BE35952707725c4a959A1",
+    "RedemptionManager": "0x5fB27142A69938FCf94ceE5183288a0a6B3c0fFE",
+    "Marketplace": "0x9C1aD06bA5702EA40131dAD626572b74C411F93A",
+    "SwapEscrow": "0xCadC4f1d3F3be596eD205437BA3b0B12B69A4888"
+  },
+  "paymentAssets": {
+    "nativeEth": "0x0000000000000000000000000000000000000000",
+    "mockUsdc": "0x29f4b1eF7261A372DB73493004CCf6A28175Dc54",
+    "mockUsdcUsdFeed": "0x3B2FD5faae46fcE73e4d7ef17c6100F1Dadb8b69"
+  },
+  "configuration": {
+    "priceStaleAfterSeconds": 86400,
+    "mockUsdcMinAnswer": 80000000,
+    "mockUsdcMaxAnswer": 120000000,
+    "defaultReserveBps": 500,
+    "secondaryFeeBps": 200
+  }
+}

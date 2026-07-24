@@ -21,10 +21,15 @@ contract PaymentArithmeticFuzzTest is BaseTest {
 
         MockERC20 token = new MockERC20("Fuzz Token", "FZZ", tokenDecimals);
         MockV3Aggregator feed = new MockV3Aggregator(feedDecimals, answer);
+        payments.setToken(address(token), address(feed), 1 days, false);
+        payments.setTokenBounds(address(token), 1, type(int192).max);
         payments.setToken(address(token), address(feed), 1 days, true);
 
+        // casting is safe because `answer` is bounded to a positive value above.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint256 unsignedAnswer = uint256(answer);
         uint256 expected =
-            (amount * uint256(answer) * payments.USD_DECIMALS()) / (10 ** tokenDecimals) / (10 ** feedDecimals);
+            (amount * unsignedAnswer * payments.USD_DECIMALS()) / (10 ** tokenDecimals) / (10 ** feedDecimals);
         if (expected == 0) {
             vm.expectRevert(PaymentTokenRegistry.InvalidPrice.selector);
             payments.quoteTokenToUsd(address(token), amount);
@@ -46,13 +51,21 @@ contract PaymentArithmeticFuzzTest is BaseTest {
 
         MockERC20 token = new MockERC20("Inverse Quote Token", "IQT", tokenDecimals);
         MockV3Aggregator feed = new MockV3Aggregator(feedDecimals, answer);
+        payments.setToken(address(token), address(feed), 1 days, false);
+        payments.setTokenBounds(address(token), 1, type(int192).max);
         payments.setToken(address(token), address(feed), 1 days, true);
 
         uint256 tokenAmount = payments.quoteUsdToToken(address(token), usdValue);
         assertGe(payments.quoteTokenToUsd(address(token), tokenAmount), usdValue);
         if (tokenAmount > 1) {
-            uint256 previousQuote = payments.quoteTokenToUsd(address(token), tokenAmount - 1);
-            assertLt(previousQuote, usdValue);
+            try payments.quoteTokenToUsd(address(token), tokenAmount - 1) returns (uint256 previousQuote) {
+                assertLt(previousQuote, usdValue);
+            } catch (bytes memory reason) {
+                // the revert payload is known to contain at least the four-byte custom-error selector.
+                // forge-lint: disable-next-line(unsafe-typecast)
+                bytes4 reasonSelector = bytes4(reason);
+                assertEq(reasonSelector, PaymentTokenRegistry.InvalidPrice.selector);
+            }
         }
     }
 

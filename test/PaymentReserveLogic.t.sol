@@ -5,6 +5,8 @@ import {PaymentTokenRegistry} from "../src/PaymentTokenRegistry.sol";
 import {ReserveManager} from "../src/ReserveManager.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
 import {BaseTest} from "./BaseTest.t.sol";
+import {MockV3Aggregator} from "./mocks/MockV3Aggregator.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract PaymentReserveLogicTest is BaseTest {
     function testRemovedPaymentTokenCannotBeQuotedOrUsed() public {
@@ -35,10 +37,9 @@ contract PaymentReserveLogicTest is BaseTest {
         payments.quoteTokenToUsd(address(0), 1 ether);
     }
 
-    function testIncompleteOracleRoundAndBoundsRevertPricing() public {
+    function testOracleRoundAndBoundsValidation() public {
         ethFeed.setRoundData(2, 2_000e8, block.timestamp, 1);
-        vm.expectRevert(PaymentTokenRegistry.StalePrice.selector);
-        payments.quoteTokenToUsd(address(0), 1 ether);
+        assertEq(payments.quoteTokenToUsd(address(0), 1 ether), 2_000e18);
 
         ethFeed.setRoundData(2, 2_000e8, 0, 2);
         vm.expectRevert(PaymentTokenRegistry.StalePrice.selector);
@@ -60,6 +61,19 @@ contract PaymentReserveLogicTest is BaseTest {
         ethFeed.updateAnswer(3_000e8);
         vm.expectRevert(PaymentTokenRegistry.InvalidPrice.selector);
         payments.quoteTokenToUsd(address(0), 1 ether);
+    }
+
+    function testTokenCannotBeEnabledWithoutOracleBounds() public {
+        MockV3Aggregator unboundedFeed = new MockV3Aggregator(8, 1e8);
+        MockERC20 unboundedToken = new MockERC20("Unbounded", "UNB", 18);
+
+        vm.expectRevert(PaymentTokenRegistry.InvalidBounds.selector);
+        payments.setToken(address(unboundedToken), address(unboundedFeed), 1 days, true);
+
+        payments.setToken(address(unboundedToken), address(unboundedFeed), 1 days, false);
+        payments.setTokenBounds(address(unboundedToken), 80_000_000, 120_000_000);
+        payments.setToken(address(unboundedToken), address(unboundedFeed), 1 days, true);
+        assertTrue(payments.isEnabled(address(unboundedToken)));
     }
 
     function testFeeOnTransferReserveFundingRecordsNetReceived() public {
@@ -87,23 +101,52 @@ contract PaymentReserveLogicTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://consume-reserve");
         reserveManager.setMinimumReserveUsd(gemId, 100e18);
 
-        vm.expectRevert(abi.encodeWithSelector(ReserveManager.ReserveShortfall.selector, 1e18, 0));
-        reserveManager.consumeReserveUsd(gemId, 1e18);
+        vm.expectRevert(abi.encodeWithSelector(ReserveManager.ReserveShortfall.selector, 100e18, 0));
+        reserveManager.requireFunded(gemId, 1e18);
 
         reserveManager.recordModuleFunding{value: 0.05 ether}(gemId, address(0), 0.05 ether, 100e18);
+        reserveManager.setProjectedLiabilityUsd(gemId, 100e18);
         reserveManager.consumeReserveUsd(gemId, 40e18);
 
-        assertEq(reserveManager.reserveBalanceUsd(gemId), 60e18);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.projectedLiabilityUsd(gemId), 60e18);
+
+        vm.expectRevert(abi.encodeWithSelector(ReserveManager.LiabilityShortfall.selector, 61e18, 60e18));
+        reserveManager.consumeReserveUsd(gemId, 61e18);
     }
 
     function testReasonedReserveConsumptionUpdatesAggregateBalance() public {
         uint256 gemId = _listedGem(1_000e18, "ipfs://reasoned-consume");
         reserveManager.recordModuleFunding{value: 0.05 ether}(gemId, address(0), 0.05 ether, 100e18);
+        reserveManager.setProjectedLiabilityUsd(gemId, 100e18);
 
         reserveManager.consumeReserveUsdFor(gemId, 25e18, keccak256("vault-fee"));
 
-        assertEq(reserveManager.reserveBalanceUsd(gemId), 75e18);
-        assertEq(reserveManager.totalReserveBalanceUsd(), 75e18);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.totalReserveBalanceUsd(), 100e18);
+        assertEq(reserveManager.projectedLiabilityUsd(gemId), 75e18);
+        assertEq(reserveManager.coverageRatioBps(), 13_333);
+    }
+
+    function testReserveValuationTracksCurrentOraclePrice() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://live-reserve-value");
+        reserveManager.setMinimumReserveUsd(gemId, 100e18);
+        reserveManager.recordModuleFunding{value: 0.05 ether}(gemId, address(0), 0.05 ether, 100e18);
+        reserveManager.setProjectedLiabilityUsd(gemId, 100e18);
+
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.recordedReserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.coverageRatioBps(), 10_000);
+
+        ethFeed.updateAnswer(1_000e8);
+
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 50e18);
+        assertEq(reserveManager.totalReserveBalanceUsd(), 50e18);
+        assertEq(reserveManager.recordedReserveBalanceUsd(gemId), 100e18);
+        assertEq(reserveManager.shortfallUsd(gemId, 1_000e18), 50e18);
+        assertEq(reserveManager.coverageRatioBps(), 5_000);
+        vm.expectRevert(abi.encodeWithSelector(ReserveManager.Insolvent.selector, 5_000, 10_000));
+        reserveManager.requireSolvent();
     }
 
     function testCoverageRatioAndSolvencyGuard() public {

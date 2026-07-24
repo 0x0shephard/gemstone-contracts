@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ComplianceRegistry} from "../src/ComplianceRegistry.sol";
 import {DGENFT} from "../src/DGENFT.sol";
@@ -171,20 +172,73 @@ contract DeployDigitalCarat is Script {
         deployment.reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(deployment.redemption));
 
         vm.stopBroadcast();
+
+        _logDeployment(admin, deployment);
+    }
+
+    function _logDeployment(address admin, Deployment memory deployment) private view {
+        console2.log("Digital Carat deployment");
+        console2.log("chainId", block.chainid);
+        console2.log("admin", admin);
+        console2.log("DGENFT", address(deployment.nft));
+        console2.log("GemRegistry", address(deployment.registry));
+        console2.log("PaymentTokenRegistry", address(deployment.payments));
+        console2.log("ReserveManager", address(deployment.reserveManager));
+        console2.log("ComplianceRegistry", address(deployment.compliance));
+        console2.log("Treasury", address(deployment.treasury));
+        console2.log("PrimarySaleAuction", address(deployment.sale));
+        console2.log("RedemptionManager", address(deployment.redemption));
+        console2.log("Marketplace", address(deployment.marketplace));
+        console2.log("SwapEscrow", address(deployment.swapEscrow));
     }
 
     function _configurePayments(PaymentTokenRegistry payments) private {
         uint48 staleAfter = uint48(vm.envUint("PRICE_STALE_AFTER"));
-        payments.setToken(address(0), vm.envAddress("ETH_USD_FEED"), staleAfter, true);
+        _configurePaymentToken(
+            payments,
+            address(0),
+            vm.envAddress("ETH_USD_FEED"),
+            staleAfter,
+            vm.envInt("ETH_USD_MIN_ANSWER"),
+            vm.envInt("ETH_USD_MAX_ANSWER")
+        );
 
         address[] memory empty;
+        int256[] memory emptyInt;
         address[] memory tokens = vm.envOr("PAYMENT_TOKENS", ",", empty);
         address[] memory feeds = vm.envOr("PAYMENT_TOKEN_USD_FEEDS", ",", empty);
-        require(tokens.length == feeds.length, "PAYMENT_TOKENS length mismatch");
+        int256[] memory minAnswers = vm.envOr("PAYMENT_TOKEN_MIN_ANSWERS", ",", emptyInt);
+        int256[] memory maxAnswers = vm.envOr("PAYMENT_TOKEN_MAX_ANSWERS", ",", emptyInt);
+        require(
+            tokens.length == feeds.length && tokens.length == minAnswers.length && tokens.length == maxAnswers.length,
+            "PAYMENT_TOKENS configuration length mismatch"
+        );
 
         for (uint256 i = 0; i < tokens.length; i++) {
-            payments.setToken(tokens[i], feeds[i], staleAfter, true);
+            _configurePaymentToken(payments, tokens[i], feeds[i], staleAfter, minAnswers[i], maxAnswers[i]);
         }
+    }
+
+    function _configurePaymentToken(
+        PaymentTokenRegistry payments,
+        address token,
+        address feed,
+        uint48 staleAfter,
+        int256 minAnswer,
+        int256 maxAnswer
+    ) private {
+        require(
+            minAnswer > 0 && maxAnswer > minAnswer && maxAnswer <= type(int192).max,
+            "Invalid payment-token oracle bounds"
+        );
+        payments.setToken(token, feed, staleAfter, false);
+        // casts are safe because both values are validated against the positive int192 range above.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        int192 minAnswer192 = int192(minAnswer);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        int192 maxAnswer192 = int192(maxAnswer);
+        payments.setTokenBounds(token, minAnswer192, maxAnswer192);
+        payments.setToken(token, feed, staleAfter, true);
     }
 
     function _configureReservePolicy(ReserveManager reserveManager) private {

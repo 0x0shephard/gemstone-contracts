@@ -23,6 +23,20 @@ contract TreasuryLogicTest is BaseTest {
         vm.prank(buyer);
         sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
+        assertEq(treasury.pendingNative(seller), 0.375 ether);
+        assertEq(treasury.pendingNative(newPlatform), 0.05 ether);
+
+        vm.prank(seller);
+        treasury.claimNative(payable(seller));
+        vm.prank(newPlatform);
+        treasury.claimNative(payable(newPlatform));
+        vm.prank(vaultReserve);
+        treasury.claimNative(payable(vaultReserve));
+        vm.prank(insuranceReserve);
+        treasury.claimNative(payable(insuranceReserve));
+        vm.prank(treasuryReserve);
+        treasury.claimNative(payable(treasuryReserve));
+
         assertEq(seller.balance, 0.375 ether);
         assertEq(newPlatform.balance, 0.05 ether);
         assertEq(vaultReserve.balance, 0.035 ether);
@@ -57,6 +71,12 @@ contract TreasuryLogicTest is BaseTest {
     function testSettleNativeRejectsZeroSeller() public {
         vm.expectRevert(Treasury.InvalidAddress.selector);
         treasury.settleNative{value: 1 ether}(address(0));
+    }
+
+    function testNativeClaimRejectsEmptyBalance() public {
+        vm.prank(stranger);
+        vm.expectRevert(Treasury.InsufficientBalance.selector);
+        treasury.claimNative(payable(stranger));
     }
 
     function testSettleTokenRejectsZeroSeller() public {

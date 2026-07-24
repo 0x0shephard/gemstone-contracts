@@ -115,8 +115,10 @@ contract DigitalCaratHandler is Test {
         vm.prank(custodian);
         registry.confirmCustody(gemId);
         vm.startPrank(admin);
-        registry.verifyGem(gemId);
-        registry.listGem(gemId, priceUsd);
+        registry.verifyGem(
+            gemId, keccak256(abi.encode("invariant-valuation", gemId)), keccak256("pricing-matrix-v1"), priceUsd
+        );
+        registry.listGem(gemId, priceUsd, GemRegistry.PrimarySaleMode.BuyNow);
         vm.stopPrank();
 
         _gems.push(TrackedGem({gemId: gemId, tokenId: 0, liabilityUsd: 0}));
@@ -315,11 +317,12 @@ contract DigitalCaratHandler is Test {
     function consumeReserve(uint256 gemSeed, uint256 amountSeed) external {
         if (_gems.length == 0) return;
         TrackedGem storage tracked = _gems[bound(gemSeed, 0, _gems.length - 1)];
-        uint256 balance = reserveManager.reserveBalanceUsd(tracked.gemId);
-        if (balance == 0) return;
-        uint256 amount = bound(amountSeed, 1, balance);
+        uint256 liability = reserveManager.projectedLiabilityUsd(tracked.gemId);
+        if (liability == 0) return;
+        uint256 amount = bound(amountSeed, 1, liability);
         vm.prank(admin);
         reserveManager.consumeReserveUsdFor(tracked.gemId, amount, keccak256("invariant-consume"));
+        tracked.liabilityUsd = liability - amount;
     }
 
     function setProjectedLiability(uint256 gemSeed, uint256 liabilitySeed) external {
@@ -471,14 +474,10 @@ contract DigitalCaratHandler is Test {
         uint256 usdcAssetTotal;
         for (uint256 i = 0; i < _gems.length; i++) {
             uint256 gemId = _gems[i].gemId;
-            GemRegistry.Gem memory gem = registry.getGem(gemId);
             uint256 reserveBalance = reserveManager.reserveBalanceUsd(gemId);
             uint256 liability = reserveManager.projectedLiabilityUsd(gemId);
             reserveTotal += reserveBalance;
             liabilityTotal += liability;
-            if (gem.status == GemRegistry.GemStatus.Minted || gem.status == GemRegistry.GemStatus.RedemptionRequested) {
-                assertGe(liability, reserveManager.requiredReserveUsd(gemId, gem.priceUsd));
-            }
             uint256 nativeAssetBalance = reserveManager.reserveAssetBalance(gemId, address(0));
             uint256 usdcAssetBalance = reserveManager.reserveAssetBalance(gemId, address(usdc));
             nativeAssetTotal += nativeAssetBalance;

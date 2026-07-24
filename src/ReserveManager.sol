@@ -28,17 +28,20 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     ReserveBracket[] private _reserveBrackets;
 
     mapping(uint256 gemId => uint256 usdAmount) public minimumReserveUsd;
-    mapping(uint256 gemId => uint256 usdAmount) public reserveBalanceUsd;
+    mapping(uint256 gemId => uint256 usdAmount) private _recordedReserveBalanceUsd;
     mapping(uint256 gemId => mapping(address asset => uint256 amount)) public reserveAssetBalance;
     mapping(uint256 gemId => address[] assets) private _reserveAssets;
     mapping(uint256 gemId => mapping(address asset => bool tracked)) private _reserveAssetTracked;
     mapping(uint256 gemId => uint256 usdAmount) public projectedLiabilityUsd;
     mapping(uint256 gemId => bool underfunded) private _underfundedGem;
-    uint256 public totalReserveBalanceUsd;
+    uint256 private _recordedTotalReserveBalanceUsd;
     uint256 public totalProjectedLiabilitiesUsd;
     uint256 public underfundedGemCount;
     uint16 public minimumCoverageBps;
     bool public globalSolvencyCheckEnabled;
+    mapping(address asset => uint256 amount) public totalReserveAssetBalance;
+    address[] private _reserveAssetTypes;
+    mapping(address asset => bool tracked) private _reserveAssetTypeTracked;
 
     event DefaultReserveBpsUpdated(uint16 reserveBps);
     event ReserveBracketsUpdated();
@@ -64,6 +67,7 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     error InvalidReserveBracket();
     error InvalidReserveBps();
     error ReserveShortfall(uint256 requiredUsd, uint256 balanceUsd);
+    error LiabilityShortfall(uint256 requiredUsd, uint256 liabilityUsd);
     error Insolvent(uint256 coverageBps, uint256 minimumCoverageBps);
     error UnderfundedReserves(uint256 underfundedGemCount);
 
@@ -244,9 +248,10 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         _recordFunding(gemId, asset, amount, quotedUsdValue);
     }
 
-    /// @notice Consumes USD reserve accounting for a gem.
+    /// @notice Records that part of a gem's projected reserve liability has been discharged.
+    /// @dev This USD-only operation does not move assets. Use `releaseReserveAsset` for an on-chain payout.
     /// @param gemId Existing gem id to debit.
-    /// @param usdValue 18-decimal USD amount to consume.
+    /// @param usdValue 18-decimal USD liability amount to discharge.
     function consumeReserveUsd(uint256 gemId, uint256 usdValue)
         external
         whenNotPaused
@@ -255,9 +260,10 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         _consumeReserveUsd(gemId, usdValue, bytes32(0));
     }
 
-    /// @notice Consumes USD reserve accounting for a gem with a reason hash.
+    /// @notice Records a reasoned discharge of projected reserve liability.
+    /// @dev This USD-only operation does not move assets. Use `releaseReserveAsset` for an on-chain payout.
     /// @param gemId Existing gem id to debit.
-    /// @param usdValue 18-decimal USD amount to consume.
+    /// @param usdValue 18-decimal USD liability amount to discharge.
     /// @param reasonHash Off-chain reason hash.
     function consumeReserveUsdFor(uint256 gemId, uint256 usdValue, bytes32 reasonHash)
         external
@@ -289,6 +295,7 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         usdValue = paymentRegistry.quoteTokenToUsd(asset, amount);
         if (usdValue == 0) revert InvalidAmount();
         reserveAssetBalance[gemId][asset] = balance - amount;
+        totalReserveAssetBalance[asset] -= amount;
         _decreaseReserveBalanceUsd(gemId, usdValue);
         _sendAsset(asset, recipient, amount);
         emit ReserveReleased(gemId, asset, recipient, amount, usdValue, reasonHash);
@@ -315,24 +322,53 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
             uint256 amount = reserveAssetBalance[gemId][asset];
             if (amount == 0) continue;
             reserveAssetBalance[gemId][asset] = 0;
+            totalReserveAssetBalance[asset] -= amount;
             _sendAsset(asset, recipient, amount);
             emit ReserveReleased(gemId, asset, recipient, amount, 0, reasonHash);
             releasedCount++;
         }
 
-        uint256 usdBalance = reserveBalanceUsd[gemId];
+        uint256 usdBalance = _recordedReserveBalanceUsd[gemId];
         if (usdBalance != 0) {
-            reserveBalanceUsd[gemId] = 0;
-            totalReserveBalanceUsd -= usdBalance;
+            _recordedReserveBalanceUsd[gemId] = 0;
+            _recordedTotalReserveBalanceUsd -= usdBalance;
             _refreshUnderfundedGem(gemId);
         }
     }
 
-    /// @notice Returns aggregate reserve coverage ratio in basis points.
+    /// @notice Returns the current oracle-valued reserve balance for a gem.
+    /// @dev Assets whose quote is unavailable are conservatively valued at zero.
+    function reserveBalanceUsd(uint256 gemId) public view returns (uint256 usdValue) {
+        address[] storage assets = _reserveAssets[gemId];
+        for (uint256 i = 0; i < assets.length; i++) {
+            usdValue += _safeQuote(assets[i], reserveAssetBalance[gemId][assets[i]]);
+        }
+    }
+
+    /// @notice Returns the current oracle-valued aggregate reserve balance.
+    /// @dev Assets whose quote is unavailable are conservatively valued at zero.
+    function totalReserveBalanceUsd() public view returns (uint256 usdValue) {
+        for (uint256 i = 0; i < _reserveAssetTypes.length; i++) {
+            address asset = _reserveAssetTypes[i];
+            usdValue += _safeQuote(asset, totalReserveAssetBalance[asset]);
+        }
+    }
+
+    /// @notice Returns the historical USD ledger for a gem before live revaluation.
+    function recordedReserveBalanceUsd(uint256 gemId) external view returns (uint256) {
+        return _recordedReserveBalanceUsd[gemId];
+    }
+
+    /// @notice Returns the historical aggregate USD ledger before live revaluation.
+    function recordedTotalReserveBalanceUsd() external view returns (uint256) {
+        return _recordedTotalReserveBalanceUsd;
+    }
+
+    /// @notice Returns aggregate live reserve coverage ratio in basis points.
     /// @return Coverage ratio, or max uint256 when liabilities are zero.
     function coverageRatioBps() public view returns (uint256) {
         if (totalProjectedLiabilitiesUsd == 0) return type(uint256).max;
-        return (totalReserveBalanceUsd * BPS_DENOMINATOR) / totalProjectedLiabilitiesUsd;
+        return (totalReserveBalanceUsd() * BPS_DENOMINATOR) / totalProjectedLiabilitiesUsd;
     }
 
     /// @notice Reverts if aggregate solvency check is enabled and below the configured minimum.
@@ -342,15 +378,13 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         if (coverage < minimumCoverageBps) revert Insolvent(coverage, minimumCoverageBps);
     }
 
-    /// @dev Debits USD reserve accounting without moving underlying assets.
+    /// @dev Discharges an equal amount of projected liability without moving underlying assets.
     function _consumeReserveUsd(uint256 gemId, uint256 usdValue, bytes32 reasonHash) private {
         _requireExistingGem(gemId);
         if (usdValue == 0) revert InvalidAmount();
-        uint256 balance = reserveBalanceUsd[gemId];
-        if (balance < usdValue) revert ReserveShortfall(usdValue, balance);
-        reserveBalanceUsd[gemId] = balance - usdValue;
-        totalReserveBalanceUsd -= usdValue;
-        _refreshUnderfundedGem(gemId);
+        uint256 liability = projectedLiabilityUsd[gemId];
+        if (liability < usdValue) revert LiabilityShortfall(usdValue, liability);
+        _setProjectedLiabilityUsd(gemId, liability - usdValue);
         emit ReserveConsumed(gemId, usdValue);
         emit ReserveConsumedFor(gemId, usdValue, reasonHash);
     }
@@ -382,7 +416,7 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     /// @param referenceValueUsd 18-decimal USD reference value.
     function shortfallUsd(uint256 gemId, uint256 referenceValueUsd) public view returns (uint256) {
         uint256 requiredUsd = requiredReserveUsd(gemId, referenceValueUsd);
-        uint256 balanceUsd = reserveBalanceUsd[gemId];
+        uint256 balanceUsd = reserveBalanceUsd(gemId);
         return balanceUsd >= requiredUsd ? 0 : requiredUsd - balanceUsd;
     }
 
@@ -392,7 +426,7 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     function requireFunded(uint256 gemId, uint256 referenceValueUsd) external view {
         _requireExistingGem(gemId);
         uint256 requiredUsd = requiredReserveUsd(gemId, referenceValueUsd);
-        uint256 balanceUsd = reserveBalanceUsd[gemId];
+        uint256 balanceUsd = reserveBalanceUsd(gemId);
         if (balanceUsd < requiredUsd) revert ReserveShortfall(requiredUsd, balanceUsd);
     }
 
@@ -413,19 +447,24 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
             _reserveAssetTracked[gemId][asset] = true;
             _reserveAssets[gemId].push(asset);
         }
+        if (!_reserveAssetTypeTracked[asset]) {
+            _reserveAssetTypeTracked[asset] = true;
+            _reserveAssetTypes.push(asset);
+        }
         reserveAssetBalance[gemId][asset] += amount;
-        reserveBalanceUsd[gemId] += usdValue;
-        totalReserveBalanceUsd += usdValue;
+        totalReserveAssetBalance[asset] += amount;
+        _recordedReserveBalanceUsd[gemId] += usdValue;
+        _recordedTotalReserveBalanceUsd += usdValue;
         _refreshUnderfundedGem(gemId);
         emit ReserveFunded(gemId, asset, amount, usdValue);
     }
 
     /// @dev Decreases USD reserve accounting, clamped to the recorded balance.
     function _decreaseReserveBalanceUsd(uint256 gemId, uint256 usdValue) private {
-        uint256 balance = reserveBalanceUsd[gemId];
+        uint256 balance = _recordedReserveBalanceUsd[gemId];
         uint256 debit = usdValue > balance ? balance : usdValue;
-        reserveBalanceUsd[gemId] = balance - debit;
-        totalReserveBalanceUsd -= debit;
+        _recordedReserveBalanceUsd[gemId] = balance - debit;
+        _recordedTotalReserveBalanceUsd -= debit;
         _refreshUnderfundedGem(gemId);
     }
 
@@ -437,7 +476,7 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     /// @notice Returns whether a gem's reserve is below its projected liability.
     /// @param gemId Gem id to query.
     function isUnderfunded(uint256 gemId) external view returns (bool) {
-        return _underfundedGem[gemId];
+        return projectedLiabilityUsd[gemId] != 0 && reserveBalanceUsd(gemId) < projectedLiabilityUsd[gemId];
     }
 
     /// @notice Returns count of tracked reserve asset types for a gem.
@@ -463,9 +502,19 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         IERC20(asset).safeTransfer(recipient, amount);
     }
 
+    /// @dev Returns a conservative live quote, valuing unavailable or invalid feeds at zero.
+    function _safeQuote(address asset, uint256 amount) private view returns (uint256 usdValue) {
+        if (amount == 0) return 0;
+        try paymentRegistry.quoteTokenToUsd(asset, amount) returns (uint256 quotedUsdValue) {
+            usdValue = quotedUsdValue;
+        } catch {
+            usdValue = 0;
+        }
+    }
+
     /// @dev Refreshes underfunded-gem tracking after reserve or liability changes.
     function _refreshUnderfundedGem(uint256 gemId) private {
-        bool underfunded = projectedLiabilityUsd[gemId] != 0 && reserveBalanceUsd[gemId] < projectedLiabilityUsd[gemId];
+        bool underfunded = projectedLiabilityUsd[gemId] != 0 && reserveBalanceUsd(gemId) < projectedLiabilityUsd[gemId];
         bool previous = _underfundedGem[gemId];
         if (underfunded == previous) return;
         _underfundedGem[gemId] = underfunded;

@@ -14,6 +14,7 @@ import {Roles} from "./libraries/Roles.sol";
 contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable {
     address public constant NATIVE_ETH = address(0);
     uint256 public constant USD_DECIMALS = 1e18;
+    uint8 public constant MAX_SUPPORTED_DECIMALS = 18;
 
     struct TokenConfig {
         bool enabled;
@@ -67,7 +68,13 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
     {
         if (feed == address(0) || staleAfter == 0) revert InvalidFeed();
         uint8 tokenDecimals = token == NATIVE_ETH ? 18 : IERC20Metadata(token).decimals();
+        if (tokenDecimals > MAX_SUPPORTED_DECIMALS || AggregatorV3Interface(feed).decimals() > MAX_SUPPORTED_DECIMALS) {
+            revert InvalidFeed();
+        }
         TokenConfig memory previous = tokenConfig[token];
+        if (enabled && (previous.minAnswer <= 0 || previous.maxAnswer <= previous.minAnswer)) {
+            revert InvalidBounds();
+        }
         tokenConfig[token] = TokenConfig({
             enabled: enabled,
             feed: feed,
@@ -136,11 +143,10 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
         if (!config.enabled) revert TokenNotEnabled();
 
         AggregatorV3Interface feed = AggregatorV3Interface(config.feed);
-        (uint80 roundId, int256 signedAnswer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
-            feed.latestRoundData();
-        if (roundId == 0 || startedAt == 0 || updatedAt == 0 || answeredInRound < roundId) revert StalePrice();
+        (uint80 roundId, int256 signedAnswer, uint256 startedAt, uint256 updatedAt,) = feed.latestRoundData();
+        if (roundId == 0 || startedAt == 0 || updatedAt == 0 || updatedAt > block.timestamp) revert StalePrice();
         if (signedAnswer <= 0) revert InvalidPrice();
-        if (config.maxAnswer != 0 && (signedAnswer < config.minAnswer || signedAnswer > config.maxAnswer)) {
+        if (signedAnswer < config.minAnswer || signedAnswer > config.maxAnswer) {
             revert InvalidPrice();
         }
         if (block.timestamp - updatedAt >= config.staleAfter) revert StalePrice();

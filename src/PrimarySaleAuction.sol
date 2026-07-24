@@ -220,6 +220,7 @@ contract PrimarySaleAuction is
             usdValue: 0,
             reserveUsd: 0
         });
+        registry.setPrimaryAuctionActive(gemId, true);
 
         emit AuctionCreated(gemId, floorUsd, startTime, endTime);
     }
@@ -234,6 +235,7 @@ contract PrimarySaleAuction is
         if (!auction.exists || auction.settled) revert InvalidAuction();
         if (block.timestamp < auction.startTime) revert InvalidAuction();
         if (block.timestamp >= auction.endTime) revert AuctionEnded();
+        if (!_canMint(gemId)) revert GemNotMintable();
         reserveManager.requireSolvent();
 
         uint256 received = _collectPayment(paymentAsset, amount);
@@ -289,6 +291,7 @@ contract PrimarySaleAuction is
         }
 
         auction.settled = true;
+        registry.setPrimaryAuctionActive(gemId, false);
         auction.reserveUsd = currentReserveUsd;
         uint256 reserveAmount = _proRataAmountRoundUp(auction.amount, currentReserveUsd, currentEscrowUsd);
         uint256 saleAmount = auction.amount - reserveAmount;
@@ -333,6 +336,7 @@ contract PrimarySaleAuction is
         address bidder = auction.highestBidder;
         address asset = auction.paymentAsset;
         uint256 amount = auction.amount;
+        registry.setPrimaryAuctionActive(gemId, false);
         delete auctions[gemId];
 
         if (bidder != address(0)) _creditRefund(bidder, asset, amount);
@@ -462,6 +466,7 @@ contract PrimarySaleAuction is
         auction.amount = 0;
         auction.usdValue = 0;
         auction.reserveUsd = 0;
+        registry.setPrimaryAuctionActive(gemId, false);
         _creditRefund(bidder, asset, amount);
         emit AuctionSettlementRefunded(gemId, bidder, asset, amount, reasonHash);
     }

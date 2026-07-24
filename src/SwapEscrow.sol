@@ -176,6 +176,7 @@ contract SwapEscrow is
         SwapOffer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
         if (block.timestamp > offer.expiry) revert Expired();
+        if (offer.proposerPaysCash && msg.value != 0) revert InvalidAmount();
         delete offers[offerId];
         uint256 offeredGemId = nft.tokenGem(offer.offeredTokenId);
         uint256 requestedGemId = nft.tokenGem(offer.requestedTokenId);

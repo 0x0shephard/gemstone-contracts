@@ -44,6 +44,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     mapping(uint256 gemId => bytes32 hash) public valuationMatrixHash;
     mapping(uint256 gemId => uint256 priceUsd) public approvedValuationUsd;
     mapping(uint256 gemId => PrimarySaleMode mode) public primarySaleMode;
+    mapping(uint256 gemId => bool active) public primaryAuctionActive;
 
     event SellerApprovalUpdated(address indexed seller, bool approved);
     event GemRegistered(uint256 indexed gemId, address indexed seller, address indexed custodian);
@@ -56,6 +57,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         uint256 approvedValuationUsd
     );
     event GemListed(uint256 indexed gemId, uint256 priceUsd, PrimarySaleMode saleMode);
+    event PrimaryAuctionStatusUpdated(uint256 indexed gemId, bool active);
     event GemMinted(uint256 indexed gemId, uint256 indexed tokenId);
     event RedemptionRequested(uint256 indexed gemId, bytes32 requestHash);
     event RedemptionCancelled(uint256 indexed gemId);
@@ -71,6 +73,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     error InvalidValuationCommitment();
     error ValuationPriceMismatch(uint256 approvedPriceUsd, uint256 requestedPriceUsd);
     error InvalidPrimarySaleMode();
+    error ActivePrimaryAuction();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -158,9 +161,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         bytes32 valuationMatrixHash_,
         uint256 approvedValuationUsd_
     ) external whenNotPaused onlyRole(Roles.VERIFIER_ROLE) {
-        if (
-            valuationHash_ == bytes32(0) || valuationMatrixHash_ == bytes32(0) || approvedValuationUsd_ == 0
-        ) {
+        if (valuationHash_ == bytes32(0) || valuationMatrixHash_ == bytes32(0) || approvedValuationUsd_ == 0) {
             revert InvalidValuationCommitment();
         }
         Gem storage gem = _existingGem(gemId);
@@ -202,9 +203,19 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     function markMinted(uint256 gemId, uint256 tokenId) external whenNotPaused onlyRole(Roles.MINTER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.Listed) revert InvalidStatus(gem.status);
+        primaryAuctionActive[gemId] = false;
         gem.tokenId = tokenId;
         gem.status = GemStatus.Minted;
         emit GemMinted(gemId, tokenId);
+    }
+
+    /// @notice Updates the active primary-auction lock for a listed gem.
+    /// @dev Callable by the primary-sale module through `MINTER_ROLE`.
+    function setPrimaryAuctionActive(uint256 gemId, bool active) external whenNotPaused onlyRole(Roles.MINTER_ROLE) {
+        Gem storage gem = _existingGem(gemId);
+        if (gem.status != GemStatus.Listed) revert InvalidStatus(gem.status);
+        primaryAuctionActive[gemId] = active;
+        emit PrimaryAuctionStatusUpdated(gemId, active);
     }
 
     /// @notice Withdraws an unsold listed gem from sale.
@@ -214,6 +225,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     function withdrawListedGem(uint256 gemId, bytes32 reasonHash) external whenNotPaused onlyRole(Roles.LISTER_ROLE) {
         Gem storage gem = _existingGem(gemId);
         if (gem.status != GemStatus.Listed) revert InvalidStatus(gem.status);
+        if (primaryAuctionActive[gemId]) revert ActivePrimaryAuction();
         gem.status = GemStatus.Withdrawn;
         emit GemWithdrawn(gemId, reasonHash);
     }

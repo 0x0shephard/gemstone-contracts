@@ -112,7 +112,10 @@ contract DigitalCaratDeploymentTest is BaseTest {
         reserveManager.grantRole(Roles.RESERVE_OPERATOR_ROLE, address(redemption));
         marketplace.setSecondaryFeeRecipient(platform);
 
-        payments.setToken(address(0), address(new MockV3Aggregator(8, 2_000e8)), 1 days, true);
+        address deploymentEthFeed = address(new MockV3Aggregator(8, 2_000e8));
+        payments.setToken(address(0), deploymentEthFeed, 1 days, false);
+        payments.setTokenBounds(address(0), 500e8, 10_000e8);
+        payments.setToken(address(0), deploymentEthFeed, 1 days, true);
         reserveManager.setDefaultReserveBps(500);
         ReserveManager.ReserveBracket[] memory brackets = new ReserveManager.ReserveBracket[](1);
         brackets[0] = ReserveManager.ReserveBracket({minPriceUsd: 0, maxPriceUsd: type(uint256).max, reserveBps: 500});
@@ -122,8 +125,8 @@ contract DigitalCaratDeploymentTest is BaseTest {
         uint256 gemId = registry.registerGem(seller, custodian, "ipfs://proxy-gem", keccak256("proxy"));
         vm.prank(custodian);
         registry.confirmCustody(gemId);
-        registry.verifyGem(gemId);
-        registry.listGem(gemId, 1_000e18);
+        registry.verifyGem(gemId, keccak256("valuation"), keccak256("matrix-v1"), 1_000e18);
+        registry.listGem(gemId, 1_000e18, GemRegistry.PrimarySaleMode.BuyNow);
 
         vm.deal(buyer, 1 ether);
         vm.prank(buyer);

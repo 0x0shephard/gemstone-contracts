@@ -6,8 +6,19 @@ import {DGENFT} from "../src/DGENFT.sol";
 import {Marketplace} from "../src/Marketplace.sol";
 import {PrimarySaleAuction} from "../src/PrimarySaleAuction.sol";
 import {ReserveManager} from "../src/ReserveManager.sol";
+import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 import {BaseTest} from "./BaseTest.t.sol";
+
+contract RejectingNativeSeller {
+    function claimTo(Treasury treasury, address payable recipient) external {
+        treasury.claimNative(recipient);
+    }
+
+    receive() external payable {
+        revert();
+    }
+}
 
 contract DigitalCaratProtocolTest is BaseTest {
     function testBuyNowRequiresMintingGates() public {
@@ -21,17 +32,16 @@ contract DigitalCaratProtocolTest is BaseTest {
     function testBuyNowNativeEthMintsAndSettles() public {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-1");
 
-        uint256 sellerBefore = seller.balance;
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
         assertEq(nft.ownerOf(tokenId), buyer);
         assertEq(nft.tokenGem(tokenId), gemId);
-        assertEq(seller.balance - sellerBefore, 0.4 ether);
-        assertEq(platform.balance, 0.04 ether);
-        assertEq(vaultReserve.balance, 0.03 ether);
-        assertEq(insuranceReserve.balance, 0.02 ether);
-        assertEq(treasuryReserve.balance, 0.01 ether);
+        assertEq(treasury.pendingNative(seller), 0.4 ether);
+        assertEq(treasury.pendingNative(platform), 0.04 ether);
+        assertEq(treasury.pendingNative(vaultReserve), 0.03 ether);
+        assertEq(treasury.pendingNative(insuranceReserve), 0.02 ether);
+        assertEq(treasury.pendingNative(treasuryReserve), 0.01 ether);
 
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         assertEq(uint256(gem.status), uint256(GemRegistry.GemStatus.Minted));
@@ -85,12 +95,11 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.expectRevert(PrimarySaleAuction.BidTooLow.selector);
         sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
-        uint256 sellerBefore = seller.balance;
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.55 ether}(gemId, address(0), 0.55 ether);
 
         assertEq(nft.ownerOf(tokenId), buyer);
-        assertEq(seller.balance - sellerBefore, 0.4 ether);
+        assertEq(treasury.pendingNative(seller), 0.4 ether);
         assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
         assertEq(reserveManager.reserveAssetBalance(gemId, address(0)), 0.05 ether);
     }
@@ -130,7 +139,7 @@ contract DigitalCaratProtocolTest is BaseTest {
     }
 
     function testAuctionRefundsPreviousBidAndSettles() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction");
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
         uint256 buyerBefore = buyer.balance;
@@ -149,11 +158,47 @@ contract DigitalCaratProtocolTest is BaseTest {
         ethFeed.updateAnswer(2_000e8);
         uint256 tokenId = sale.settleAuction(gemId);
         assertEq(nft.ownerOf(tokenId), bidder);
-        assertEq(seller.balance, 0.48 ether);
+        assertEq(treasury.pendingNative(seller), 0.48 ether);
+    }
+
+    function testRejectingNativeSellerCannotBlockAuctionSettlement() public {
+        RejectingNativeSeller rejectingSeller = new RejectingNativeSeller();
+        registry.setSellerApproval(address(rejectingSeller), true);
+        uint256 gemId =
+            registry.registerGem(address(rejectingSeller), custodian, "ipfs://rejecting-seller", keccak256("cert"));
+        vm.prank(custodian);
+        registry.confirmCustody(gemId);
+        registry.verifyGem(gemId, keccak256("valuation"), keccak256("matrix-v1"), 1_000e18);
+        registry.listGem(gemId, 1_000e18, GemRegistry.PrimarySaleMode.Auction);
+        sale.createDailyAuction(gemId, 1_000e18);
+
+        vm.prank(bidder);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        vm.warp(block.timestamp + 1 days);
+        ethFeed.updateAnswer(2_000e8);
+
+        uint256 tokenId = sale.settleAuction(gemId);
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(treasury.pendingNative(address(rejectingSeller)), 0.4 ether);
+
+        uint256 beneficiaryBefore = stranger.balance;
+        rejectingSeller.claimTo(treasury, payable(stranger));
+        assertEq(stranger.balance - beneficiaryBefore, 0.4 ether);
+    }
+
+    function testBidRejectsGemThatIsNoLongerMintable() public {
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://auction-revoked-seller");
+        sale.createDailyAuction(gemId, 1_000e18);
+        registry.setSellerApproval(seller, false);
+
+        vm.prank(bidder);
+        vm.expectRevert(PrimarySaleAuction.GemNotMintable.selector);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        assertEq(address(sale).balance, 0);
     }
 
     function testAuctionSettlementRechecksReserveShortfall() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-reserve-recheck");
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-reserve-recheck");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
         uint256 bidderBefore = bidder.balance;
@@ -184,7 +229,7 @@ contract DigitalCaratProtocolTest is BaseTest {
     }
 
     function testAuctionSettlementFundsCurrentReserveShortfallFromEscrow() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-reserve-funded");
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-reserve-funded");
         reserveManager.setMinimumReserveUsd(gemId, 100e18);
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
@@ -212,7 +257,7 @@ contract DigitalCaratProtocolTest is BaseTest {
     }
 
     function testDailyAuctionUsesTwentyFourHourDuration() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-daily-auction");
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-daily-auction");
 
         sale.createDailyAuction(gemId, 1_000e18);
 
@@ -222,8 +267,8 @@ contract DigitalCaratProtocolTest is BaseTest {
     }
 
     function testBatchSettlementSkipsIneligibleAuctions() public {
-        uint256 bidGemId = _listedGem(1_000e18, "ipfs://gem-batch-settle");
-        uint256 noBidGemId = _listedGem(1_000e18, "ipfs://gem-batch-skip");
+        uint256 bidGemId = _listedAuctionGem(1_000e18, "ipfs://gem-batch-settle");
+        uint256 noBidGemId = _listedAuctionGem(1_000e18, "ipfs://gem-batch-skip");
         sale.createDailyAuction(bidGemId, 1_000e18);
         sale.createDailyAuction(noBidGemId, 1_000e18);
 
@@ -253,7 +298,7 @@ contract DigitalCaratProtocolTest is BaseTest {
     }
 
     function testAuctionOutbidDoesNotDependOnInlineNativeRefund() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-pin");
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-pin");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
         RevertingRefundBidder attacker = new RevertingRefundBidder(sale);
@@ -267,7 +312,7 @@ contract DigitalCaratProtocolTest is BaseTest {
     }
 
     function testCannotCancelAuctionOnceBidExists() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-cancel");
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-cancel");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
         vm.prank(buyer);
@@ -281,22 +326,24 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(sale.pendingRefunds(buyer, address(0)), 0.5 ether);
     }
 
-    function testAuctionRefundsHighestBidIfGemBecomesUnmintable() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-withdrawn");
+    function testActiveAuctionPreventsGemWithdrawal() public {
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-withdrawn");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
         vm.prank(buyer);
         sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
+        vm.expectRevert(GemRegistry.ActivePrimaryAuction.selector);
         registry.withdrawListedGem(gemId, keccak256("withdraw-during-auction"));
-        vm.warp(block.timestamp + 1 days);
 
-        assertEq(sale.settleAuction(gemId), 0);
-        assertEq(sale.pendingRefunds(buyer, address(0)), 0.5 ether);
+        vm.warp(block.timestamp + 1 days);
+        ethFeed.updateAnswer(2_000e8);
+        uint256 tokenId = sale.settleAuction(gemId);
+        assertEq(nft.ownerOf(tokenId), buyer);
     }
 
     function testAuctionRefundsHighestBidIfPaymentTokenRemoved() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-token-removed");
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-token-removed");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
         vm.startPrank(buyer);
@@ -311,20 +358,16 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(sale.pendingRefunds(buyer, address(usdc)), 1_000e6);
     }
 
-    function testBuyNowDuringLiveAuctionMintsAndAuctionBidIsRefundable() public {
-        uint256 gemId = _listedGem(1_000e18, "ipfs://gem-auction-buy-now-race");
+    function testBuyNowCannotBypassAuctionSaleMode() public {
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-buy-now-race");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
         vm.prank(bidder);
         sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
         vm.prank(buyer);
-        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
-        assertEq(nft.ownerOf(tokenId), buyer);
-
-        vm.warp(block.timestamp + 1 days);
-        assertEq(sale.settleAuction(gemId), 0);
-        assertEq(sale.pendingRefunds(bidder, address(0)), 0.5 ether);
+        vm.expectRevert(PrimarySaleAuction.WrongPrimarySaleMode.selector);
+        sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
     }
 
     function testRedemptionLocksAndBurnsToken() public {

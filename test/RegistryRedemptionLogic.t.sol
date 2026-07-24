@@ -17,8 +17,8 @@ contract RegistryRedemptionLogicTest is BaseTest {
 
         vm.prank(custodian);
         registry.confirmCustody(gemId);
-        registry.verifyGem(gemId);
-        registry.listGem(gemId, 1_000e18);
+        registry.verifyGem(gemId, keccak256("valuation"), keccak256("matrix-v1"), 1_000e18);
+        registry.listGem(gemId, 1_000e18, GemRegistry.PrimarySaleMode.BuyNow);
         assertTrue(registry.canMint(gemId));
 
         registry.setSellerApproval(seller, false);
@@ -29,23 +29,23 @@ contract RegistryRedemptionLogicTest is BaseTest {
         uint256 gemId = registry.registerGem(seller, custodian, "ipfs://bad-transition", keccak256("bad-transition"));
 
         vm.expectRevert(abi.encodeWithSelector(GemRegistry.InvalidStatus.selector, GemRegistry.GemStatus.Registered));
-        registry.verifyGem(gemId);
+        registry.verifyGem(gemId, keccak256("valuation"), keccak256("matrix-v1"), 1_000e18);
 
         vm.prank(custodian);
         registry.confirmCustody(gemId);
 
         vm.expectRevert(GemRegistry.InvalidPrice.selector);
-        registry.listGem(gemId, 0);
+        registry.listGem(gemId, 0, GemRegistry.PrimarySaleMode.BuyNow);
 
         vm.expectRevert(
             abi.encodeWithSelector(GemRegistry.InvalidStatus.selector, GemRegistry.GemStatus.CustodyConfirmed)
         );
-        registry.listGem(gemId, 1_000e18);
+        registry.listGem(gemId, 1_000e18, GemRegistry.PrimarySaleMode.BuyNow);
 
-        registry.verifyGem(gemId);
+        registry.verifyGem(gemId, keccak256("valuation"), keccak256("matrix-v1"), 1_000e18);
         registry.setSellerApproval(seller, false);
         vm.expectRevert(GemRegistry.SellerNotApproved.selector);
-        registry.listGem(gemId, 1_000e18);
+        registry.listGem(gemId, 1_000e18, GemRegistry.PrimarySaleMode.BuyNow);
     }
 
     function testRegistryPauseBlocksStateChangingLifecycleCalls() public {

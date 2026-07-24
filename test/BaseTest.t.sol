@@ -154,12 +154,12 @@ abstract contract BaseTest is Test {
     function _configureDefaultPayments() internal {
         ethFeed = new MockV3Aggregator(8, 2_000e8);
         usdFeed = new MockV3Aggregator(8, 1e8);
-        payments.setToken(address(0), address(ethFeed), 1 days, true);
+        _configurePaymentToken(address(0), address(ethFeed), 500e8, 10_000e8);
 
         usdc = new MockERC20("USD Coin", "USDC", 6);
         feeToken = new FeeOnTransferERC20(1_000, feeCollector);
-        payments.setToken(address(usdc), address(usdFeed), 1 days, true);
-        payments.setToken(address(feeToken), address(usdFeed), 1 days, true);
+        _configurePaymentToken(address(usdc), address(usdFeed), 80_000_000, 120_000_000);
+        _configurePaymentToken(address(feeToken), address(usdFeed), 80_000_000, 120_000_000);
     }
 
     function _fundDefaultActors() internal {
@@ -173,12 +173,29 @@ abstract contract BaseTest is Test {
     }
 
     function _listedGem(uint256 priceUsd, string memory uri) internal returns (uint256 gemId) {
+        return _listedGemWithMode(priceUsd, uri, GemRegistry.PrimarySaleMode.BuyNow);
+    }
+
+    function _listedAuctionGem(uint256 priceUsd, string memory uri) internal returns (uint256 gemId) {
+        return _listedGemWithMode(priceUsd, uri, GemRegistry.PrimarySaleMode.Auction);
+    }
+
+    function _listedGemWithMode(uint256 priceUsd, string memory uri, GemRegistry.PrimarySaleMode saleMode)
+        internal
+        returns (uint256 gemId)
+    {
         registry.setSellerApproval(seller, true);
         gemId = registry.registerGem(seller, custodian, uri, keccak256(bytes(uri)));
         vm.prank(custodian);
         registry.confirmCustody(gemId);
-        registry.verifyGem(gemId);
-        registry.listGem(gemId, priceUsd);
+        registry.verifyGem(gemId, keccak256(abi.encode("valuation", uri)), keccak256("pricing-matrix-v1"), priceUsd);
+        registry.listGem(gemId, priceUsd, saleMode);
+    }
+
+    function _configurePaymentToken(address token, address feed, int192 minAnswer, int192 maxAnswer) internal {
+        payments.setToken(token, feed, 1 days, false);
+        payments.setTokenBounds(token, minAnswer, maxAnswer);
+        payments.setToken(token, feed, 1 days, true);
     }
 
     function _mintGemTo(address owner, uint256 priceUsd, string memory uri)
