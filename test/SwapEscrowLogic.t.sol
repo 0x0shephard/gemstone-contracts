@@ -5,6 +5,69 @@ import {SwapEscrow} from "../src/SwapEscrow.sol";
 import {BaseTest} from "./BaseTest.t.sol";
 
 contract SwapEscrowLogicTest is BaseTest {
+    function _fundSwapReserve(uint256 gemId, address funder, uint256 nativeAmount) private {
+        reserveManager.setMinimumReserveUsd(gemId, 1_000e18);
+        vm.prank(funder);
+        reserveManager.fundNative{value: nativeAmount}(gemId);
+    }
+
+    function testSwapAllowsPartialReserveAboveTenPercent() public {
+        (uint256 firstGemId, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-partial-a");
+        (uint256 secondGemId, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-partial-b");
+        // Native oracle is $2,000: 0.055 ETH is $110, or 11% of $1,000.
+        _fundSwapReserve(firstGemId, buyer, 0.055 ether);
+        _fundSwapReserve(secondGemId, bidder, 0.055 ether);
+
+        vm.startPrank(buyer);
+        nft.approve(address(swapEscrow), firstTokenId);
+        uint256 offerId =
+            swapEscrow.createOffer(firstTokenId, secondTokenId, address(0), 0, false, uint64(block.timestamp + 1 days));
+        vm.stopPrank();
+
+        vm.startPrank(bidder);
+        nft.approve(address(swapEscrow), secondTokenId);
+        swapEscrow.acceptOffer(offerId);
+        vm.stopPrank();
+
+        assertEq(nft.ownerOf(firstTokenId), bidder);
+        assertEq(nft.ownerOf(secondTokenId), buyer);
+    }
+
+    function testSwapBlocksReserveAtTenPercent() public {
+        (uint256 firstGemId, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-threshold-a");
+        (uint256 secondGemId, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-threshold-b");
+        // 0.05 ETH is exactly $100, or 10% of the configured requirement.
+        _fundSwapReserve(firstGemId, buyer, 0.05 ether);
+        _fundSwapReserve(secondGemId, bidder, 0.055 ether);
+
+        vm.startPrank(buyer);
+        nft.approve(address(swapEscrow), firstTokenId);
+        vm.expectRevert(abi.encodeWithSelector(SwapEscrow.ReserveCoverageTooLow.selector, firstGemId, 1_000e18, 100e18));
+        swapEscrow.createOffer(firstTokenId, secondTokenId, address(0), 0, false, uint64(block.timestamp + 1 days));
+        vm.stopPrank();
+    }
+
+    function testSwapRechecksTenPercentBoundaryOnAcceptance() public {
+        (, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-accept-threshold-a");
+        (uint256 secondGemId, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-accept-threshold-b");
+
+        vm.startPrank(buyer);
+        nft.approve(address(swapEscrow), firstTokenId);
+        uint256 offerId =
+            swapEscrow.createOffer(firstTokenId, secondTokenId, address(0), 0, false, uint64(block.timestamp + 1 days));
+        vm.stopPrank();
+
+        // Coverage can move while an offer is open, so acceptance checks again.
+        _fundSwapReserve(secondGemId, bidder, 0.05 ether);
+        vm.startPrank(bidder);
+        nft.approve(address(swapEscrow), secondTokenId);
+        vm.expectRevert(
+            abi.encodeWithSelector(SwapEscrow.ReserveCoverageTooLow.selector, secondGemId, 1_000e18, 100e18)
+        );
+        swapEscrow.acceptOffer(offerId);
+        vm.stopPrank();
+    }
+
     function testCreateOfferRejectsExpiredAndSameTokenOffers() public {
         (, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-invalid-a");
         (, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-invalid-b");

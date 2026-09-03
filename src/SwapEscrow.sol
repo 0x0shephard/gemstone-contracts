@@ -9,6 +9,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {DGENFT} from "./DGENFT.sol";
 import {GemRegistry} from "./GemRegistry.sol";
 import {PaymentTokenRegistry} from "./PaymentTokenRegistry.sol";
@@ -24,6 +25,9 @@ contract SwapEscrow is
     IERC721Receiver
 {
     using SafeERC20 for IERC20;
+
+    uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant MIN_SWAP_RESERVE_BPS = 1_000;
 
     struct SwapOffer {
         address proposer;
@@ -63,6 +67,7 @@ contract SwapEscrow is
     error InvalidAmount();
     error TransferFailed();
     error GemNotMinted();
+    error ReserveCoverageTooLow(uint256 gemId, uint256 requiredUsd, uint256 balanceUsd);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -127,8 +132,10 @@ contract SwapEscrow is
         uint256 offeredGemId = nft.tokenGem(offeredTokenId);
         _requireMintedGem(offeredGemId);
         _requireMintedGem(requestedGemId);
+        GemRegistry.Gem memory offeredGem = registry.getGem(offeredGemId);
         GemRegistry.Gem memory requestedGem = registry.getGem(requestedGemId);
-        reserveManager.requireFunded(requestedGemId, requestedGem.priceUsd);
+        _requireSwapReserve(offeredGemId, offeredGem.priceUsd);
+        _requireSwapReserve(requestedGemId, requestedGem.priceUsd);
 
         offerId = _nextOfferId++;
         nft.safeTransferFrom(msg.sender, address(this), offeredTokenId);
@@ -184,9 +191,8 @@ contract SwapEscrow is
         _requireMintedGem(requestedGemId);
         GemRegistry.Gem memory offeredGem = registry.getGem(offeredGemId);
         GemRegistry.Gem memory requestedGem = registry.getGem(requestedGemId);
-        reserveManager.requireSolvent();
-        reserveManager.requireFunded(offeredGemId, offeredGem.priceUsd);
-        reserveManager.requireFunded(requestedGemId, requestedGem.priceUsd);
+        _requireSwapReserve(offeredGemId, offeredGem.priceUsd);
+        _requireSwapReserve(requestedGemId, requestedGem.priceUsd);
 
         nft.safeTransferFrom(msg.sender, offer.proposer, offer.requestedTokenId);
         nft.safeTransferFrom(address(this), msg.sender, offer.offeredTokenId);
@@ -245,6 +251,18 @@ contract SwapEscrow is
     function _requireMintedGem(uint256 gemId) private view {
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         if (gem.status != GemRegistry.GemStatus.Minted) revert GemNotMinted();
+    }
+
+    /// @dev A swap changes ownership but does not consume reserve. Partial
+    ///      coverage is therefore allowed, while ten percent or less is not.
+    function _requireSwapReserve(uint256 gemId, uint256 referenceValueUsd) private view {
+        uint256 requiredUsd = reserveManager.requiredReserveUsd(gemId, referenceValueUsd);
+        if (requiredUsd == 0) return;
+        uint256 balanceUsd = reserveManager.reserveBalanceUsd(gemId);
+        uint256 coverageBps = Math.mulDiv(balanceUsd, BPS_DENOMINATOR, requiredUsd);
+        if (coverageBps <= MIN_SWAP_RESERVE_BPS) {
+            revert ReserveCoverageTooLow(gemId, requiredUsd, balanceUsd);
+        }
     }
 
     receive() external payable {}
