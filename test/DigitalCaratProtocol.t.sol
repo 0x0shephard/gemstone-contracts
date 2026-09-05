@@ -149,9 +149,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.prank(bidder);
         sale.bid{value: 0.6 ether}(gemId, address(0), 0.6 ether);
 
-        assertEq(sale.pendingRefunds(buyer, address(0)), 0.5 ether);
-        vm.prank(buyer);
-        sale.claimRefund(address(0));
+        assertEq(sale.pendingRefunds(buyer, address(0)), 0);
         assertEq(buyer.balance, buyerBefore);
 
         vm.warp(block.timestamp + 1 days);
@@ -210,10 +208,7 @@ contract DigitalCaratProtocolTest is BaseTest {
 
         uint256 tokenId = sale.settleAuction(gemId);
         assertEq(tokenId, 0);
-        assertEq(sale.pendingRefunds(bidder, address(0)), 0.5 ether);
-
-        vm.prank(bidder);
-        sale.claimRefund(address(0));
+        assertEq(sale.pendingRefunds(bidder, address(0)), 0);
         assertEq(bidder.balance, bidderBefore);
 
         ethFeed.updateAnswer(2_000e8);
@@ -315,6 +310,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-cancel");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
+        uint256 buyerBefore = buyer.balance;
         vm.prank(buyer);
         sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
@@ -323,7 +319,8 @@ contract DigitalCaratProtocolTest is BaseTest {
 
         vm.warp(block.timestamp + 1 days);
         sale.cancelAuction(gemId);
-        assertEq(sale.pendingRefunds(buyer, address(0)), 0.5 ether);
+        assertEq(sale.pendingRefunds(buyer, address(0)), 0);
+        assertEq(buyer.balance, buyerBefore);
     }
 
     function testActiveAuctionPreventsGemWithdrawal() public {
@@ -346,6 +343,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-token-removed");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
+        uint256 buyerBefore = usdc.balanceOf(buyer);
         vm.startPrank(buyer);
         usdc.approve(address(sale), 1_000e6);
         sale.bid(gemId, address(usdc), 1_000e6);
@@ -355,7 +353,8 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.warp(block.timestamp + 1 days);
 
         assertEq(sale.settleAuction(gemId), 0);
-        assertEq(sale.pendingRefunds(buyer, address(usdc)), 1_000e6);
+        assertEq(sale.pendingRefunds(buyer, address(usdc)), 0);
+        assertEq(usdc.balanceOf(buyer), buyerBefore);
     }
 
     function testBuyNowCannotBypassAuctionSaleMode() public {

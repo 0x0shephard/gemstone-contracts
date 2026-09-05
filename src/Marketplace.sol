@@ -41,8 +41,18 @@ contract Marketplace is
         bool active;
     }
 
+    struct ListingSettlement {
+        uint256 tokenId;
+        uint256 offerId;
+        uint256 gemId;
+        uint256 gemPriceUsd;
+        uint256 reserveUsd;
+        uint256 currentEscrowUsd;
+    }
+
     uint16 public constant BPS_DENOMINATOR = 10_000;
     uint64 public constant OFFER_DURATION = 1 days;
+    uint256 public constant MIN_BID_INCREMENT_USD = 1e18;
 
     DGENFT public nft;
     GemRegistry public registry;
@@ -54,6 +64,12 @@ contract Marketplace is
     uint256 private _nextOfferId;
     mapping(uint256 tokenId => Listing) public listings;
     mapping(uint256 offerId => Offer) public offers;
+    // Appended for UUPS storage compatibility. A qualifying offer on an escrowed
+    // listing becomes its 24-hour auction leader and settles without seller
+    // approval. Offers on unlisted tokens retain the original manual flow.
+    mapping(uint256 tokenId => uint256 offerId) public listingWinningOffer;
+    mapping(uint256 tokenId => uint64 endTime) public listingAuctionEnd;
+    mapping(address account => mapping(address asset => uint256 amount)) public pendingRefunds;
 
     event Listed(uint256 indexed tokenId, address indexed seller, uint256 priceUsd);
     event ListingCancelled(uint256 indexed tokenId);
@@ -71,6 +87,22 @@ contract Marketplace is
     );
     event OfferCancelled(uint256 indexed offerId);
     event OfferAccepted(uint256 indexed offerId, address indexed seller);
+    event ListingAuctionStarted(uint256 indexed tokenId, uint256 indexed offerId, uint64 endTime);
+    event ListingBidOutbid(uint256 indexed tokenId, uint256 indexed previousOfferId, uint256 indexed newOfferId);
+    event ListingAuctionSettled(
+        uint256 indexed tokenId,
+        uint256 indexed offerId,
+        address indexed winner,
+        address paymentAsset,
+        uint256 amount,
+        uint256 usdValue
+    );
+    event ListingAuctionRefunded(
+        uint256 indexed tokenId, uint256 indexed offerId, address indexed bidder, address paymentAsset, uint256 amount
+    );
+    event RefundCredited(address indexed account, address indexed asset, uint256 amount);
+    event RefundClaimed(address indexed account, address indexed asset, uint256 amount);
+    event RefundSent(address indexed account, address indexed asset, uint256 amount);
     event PaymentSurplusRefunded(address indexed account, address indexed asset, uint256 amount);
     event SecondaryFeeUpdated(uint16 feeBps);
     event SecondaryFeeRecipientUpdated(address recipient);
@@ -88,6 +120,9 @@ contract Marketplace is
     error NotExpired();
     error TransferFailed();
     error GemNotMinted();
+    error AuctionActive();
+    error AuctionNotEnded();
+    error BidTooLow();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -153,7 +188,10 @@ contract Marketplace is
         Listing memory listing = listings[tokenId];
         if (listing.seller == address(0)) revert NotListed();
         if (listing.seller != msg.sender) revert NotSeller();
+        if (_activeListingBid(tokenId)) revert AuctionActive();
         delete listings[tokenId];
+        delete listingAuctionEnd[tokenId];
+        delete listingWinningOffer[tokenId];
         nft.safeTransferFrom(address(this), listing.seller, tokenId);
         emit ListingCancelled(tokenId);
     }
@@ -166,7 +204,10 @@ contract Marketplace is
     function buy(uint256 tokenId, address paymentAsset, uint256 amount) external payable nonReentrant whenNotPaused {
         Listing memory listing = listings[tokenId];
         if (listing.seller == address(0)) revert NotListed();
+        if (_activeListingBid(tokenId)) revert AuctionActive();
         delete listings[tokenId];
+        delete listingAuctionEnd[tokenId];
+        delete listingWinningOffer[tokenId];
 
         reserveManager.requireSolvent();
         uint256 gemId = nft.tokenGem(tokenId);
@@ -233,8 +274,27 @@ contract Marketplace is
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         if (usdValue <= reserveUsd) revert PriceNotMet();
         uint256 saleUsdValue = usdValue - reserveUsd;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint64 expiry = uint64(block.timestamp + OFFER_DURATION);
+        Listing memory listing = listings[tokenId];
+        if (listing.seller == msg.sender) revert NotSeller();
+
+        uint256 previousOfferId;
+        uint64 expiry;
+        if (listing.seller != address(0)) {
+            previousOfferId = listingWinningOffer[tokenId];
+            Offer memory previous = offers[previousOfferId];
+            if (previousOfferId == 0 || !previous.active) {
+                if (saleUsdValue < listing.priceUsd) revert BidTooLow();
+                // forge-lint: disable-next-line(unsafe-typecast)
+                expiry = uint64(block.timestamp + OFFER_DURATION);
+            } else {
+                expiry = listingAuctionEnd[tokenId];
+                if (block.timestamp >= expiry) revert Expired();
+                if (saleUsdValue < previous.saleUsdValue + MIN_BID_INCREMENT_USD) revert BidTooLow();
+            }
+        } else {
+            // forge-lint: disable-next-line(unsafe-typecast)
+            expiry = uint64(block.timestamp + OFFER_DURATION);
+        }
 
         offerId = _nextOfferId++;
         offers[offerId] = Offer({
@@ -248,6 +308,20 @@ contract Marketplace is
         });
 
         emit OfferCreated(offerId, msg.sender, tokenId, paymentAsset, received, saleUsdValue, expiry);
+
+        if (listing.seller != address(0)) {
+            listingWinningOffer[tokenId] = offerId;
+            listingAuctionEnd[tokenId] = expiry;
+            if (previousOfferId == 0) {
+                emit ListingAuctionStarted(tokenId, offerId, expiry);
+            } else {
+                Offer memory previous = offers[previousOfferId];
+                delete offers[previousOfferId];
+                _refundOrCredit(previous.bidder, previous.paymentAsset, previous.amount);
+                emit OfferCancelled(previousOfferId);
+                emit ListingBidOutbid(tokenId, previousOfferId, offerId);
+            }
+        }
     }
 
     /// @notice Cancels and refunds an expired offer.
@@ -256,6 +330,7 @@ contract Marketplace is
         Offer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
         if (block.timestamp <= offer.expiry) revert NotExpired();
+        if (listingWinningOffer[offer.tokenId] == offerId) revert AuctionActive();
         delete offers[offerId];
         _sendPayment(offer.bidder, offer.paymentAsset, offer.amount);
         emit OfferCancelled(offerId);
@@ -267,6 +342,7 @@ contract Marketplace is
     function acceptOffer(uint256 offerId) external nonReentrant whenNotPaused {
         Offer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
+        if (listingWinningOffer[offer.tokenId] == offerId) revert AuctionActive();
         if (block.timestamp > offer.expiry) revert Expired();
         if (nft.ownerOf(offer.tokenId) != msg.sender) revert NotSeller();
         delete offers[offerId];
@@ -291,6 +367,92 @@ contract Marketplace is
         _settleSecondary(offer.paymentAsset, msg.sender, saleAmount);
         nft.safeTransferFrom(msg.sender, offer.bidder, offer.tokenId);
         emit OfferAccepted(offerId, msg.sender);
+    }
+
+    /// @notice Settles the winning bid on an escrowed listing after 24 hours.
+    /// @dev Permissionless so a scheduler or either party may finalize it. If a
+    /// fresh oracle quote no longer covers the sale plus reserve shortfall, the
+    /// bidder is refunded and the token remains listed for a new auction.
+    function settleListingAuction(uint256 tokenId) external nonReentrant whenNotPaused returns (bool sold) {
+        Listing memory listing = listings[tokenId];
+        if (listing.seller == address(0)) revert NotListed();
+        uint256 offerId = listingWinningOffer[tokenId];
+        Offer memory offer = offers[offerId];
+        if (offerId == 0 || !offer.active) revert InvalidOffer();
+        uint64 endTime = listingAuctionEnd[tokenId];
+        if (block.timestamp < endTime) revert AuctionNotEnded();
+
+        return _finalizeListingAuction(tokenId, offerId);
+    }
+
+    function _finalizeListingAuction(uint256 tokenId, uint256 offerId) private returns (bool sold) {
+        Offer memory offer = offers[offerId];
+        uint256 gemId = nft.tokenGem(tokenId);
+        _requireMintedGemId(gemId);
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
+        (bool quoted, uint256 currentEscrowUsd) = _quotePayment(offer.paymentAsset, offer.amount);
+
+        uint256 requiredUsd = offer.saleUsdValue + reserveUsd;
+        if (!quoted || currentEscrowUsd < requiredUsd) {
+            _refundListingAuction(tokenId, offerId);
+            return false;
+        }
+
+        _completeListingAuction(
+            ListingSettlement({
+                tokenId: tokenId,
+                offerId: offerId,
+                gemId: gemId,
+                gemPriceUsd: gem.priceUsd,
+                reserveUsd: reserveUsd,
+                currentEscrowUsd: currentEscrowUsd
+            })
+        );
+        return true;
+    }
+
+    function _completeListingAuction(ListingSettlement memory settlement) private {
+        Listing memory listing = listings[settlement.tokenId];
+        Offer memory offer = offers[settlement.offerId];
+        uint256 reserveAmount = _proRataAmountRoundUp(offer.amount, settlement.reserveUsd, settlement.currentEscrowUsd);
+        uint256 saleAmount = offer.amount - reserveAmount;
+
+        delete listings[settlement.tokenId];
+        delete offers[settlement.offerId];
+        delete listingWinningOffer[settlement.tokenId];
+        delete listingAuctionEnd[settlement.tokenId];
+
+        if (reserveAmount != 0) {
+            _fundReserve(settlement.gemId, offer.paymentAsset, reserveAmount);
+            reserveManager.requireFunded(settlement.gemId, settlement.gemPriceUsd);
+        }
+        reserveManager.syncProjectedLiabilityUsd(settlement.gemId, settlement.gemPriceUsd);
+        _settleSecondary(offer.paymentAsset, listing.seller, saleAmount);
+        nft.safeTransferFrom(address(this), offer.bidder, settlement.tokenId);
+
+        emit OfferAccepted(settlement.offerId, listing.seller);
+        emit ListingAuctionSettled(
+            settlement.tokenId, settlement.offerId, offer.bidder, offer.paymentAsset, offer.amount, offer.saleUsdValue
+        );
+    }
+
+    function _refundListingAuction(uint256 tokenId, uint256 offerId) private {
+        Offer memory offer = offers[offerId];
+        delete offers[offerId];
+        delete listingWinningOffer[tokenId];
+        delete listingAuctionEnd[tokenId];
+        _refundOrCredit(offer.bidder, offer.paymentAsset, offer.amount);
+        emit ListingAuctionRefunded(tokenId, offerId, offer.bidder, offer.paymentAsset, offer.amount);
+    }
+
+    /// @notice Claims a refund that could not be pushed to the wallet.
+    function claimRefund(address asset) external nonReentrant {
+        uint256 amount = pendingRefunds[msg.sender][asset];
+        if (amount == 0) revert InvalidAmount();
+        pendingRefunds[msg.sender][asset] = 0;
+        _sendPayment(msg.sender, asset, amount);
+        emit RefundClaimed(msg.sender, asset, amount);
     }
 
     /// @notice Sets secondary marketplace fee BPS.
@@ -390,6 +552,50 @@ contract Marketplace is
             return;
         }
         IERC20(paymentAsset).safeTransfer(to, amount);
+    }
+
+    /// @dev Pushes losing bids back immediately without letting a hostile
+    /// receiver block the higher bid. A failed push remains claimable.
+    function _refundOrCredit(address to, address paymentAsset, uint256 amount) private {
+        if (amount == 0) return;
+        if (_tryPayment(to, paymentAsset, amount)) {
+            emit RefundSent(to, paymentAsset, amount);
+            return;
+        }
+        pendingRefunds[to][paymentAsset] += amount;
+        emit RefundCredited(to, paymentAsset, amount);
+    }
+
+    function _tryPayment(address to, address paymentAsset, uint256 amount) private returns (bool) {
+        if (paymentAsset == address(0)) {
+            (bool sent,) = payable(to).call{value: amount}("");
+            return sent;
+        }
+        (bool called, bytes memory result) = paymentAsset.call(abi.encodeCall(IERC20.transfer, (to, amount)));
+        if (!called) return false;
+        if (result.length == 0) return true;
+        if (result.length < 32) return false;
+        // Do not ABI-decode an untrusted token response here: a non-canonical
+        // boolean would itself revert and defeat the pull-credit fallback.
+        uint256 returned;
+        assembly ("memory-safe") {
+            returned := mload(add(result, 32))
+        }
+        return returned != 0;
+    }
+
+    function _activeListingBid(uint256 tokenId) private view returns (bool) {
+        uint256 offerId = listingWinningOffer[tokenId];
+        return offerId != 0 && offers[offerId].active;
+    }
+
+    function _quotePayment(address paymentAsset, uint256 amount) private view returns (bool ok, uint256 usdValue) {
+        try paymentRegistry.quoteTokenToUsd(paymentAsset, amount) returns (uint256 quotedUsdValue) {
+            ok = true;
+            usdValue = quotedUsdValue;
+        } catch {
+            ok = false;
+        }
     }
 
     /// @dev Returns token's gem id and requires the gem to be in minted status.

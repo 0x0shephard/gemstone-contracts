@@ -69,6 +69,7 @@ contract PrimarySaleAuction is
         uint256 indexed gemId, address indexed bidder, address indexed paymentAsset, uint256 amount, bytes32 reasonHash
     );
     event RefundCredited(address indexed account, address indexed asset, uint256 amount);
+    event RefundSent(address indexed account, address indexed asset, uint256 amount);
     event RefundClaimed(address indexed account, address indexed asset, uint256 amount);
     event PaymentSurplusRefunded(address indexed account, address indexed asset, uint256 amount);
     event AuctionSettlementSkipped(uint256 indexed gemId, bytes reason);
@@ -428,11 +429,36 @@ contract PrimarySaleAuction is
         IERC20(paymentAsset).safeTransfer(to, amount);
     }
 
-    /// @dev Credits a pull-based refund.
+    /// @dev Pushes a refund immediately, falling back to a pull credit when the
+    /// recipient rejects native ETH or a non-standard token transfer fails.
+    /// A hostile bidder must never be able to block the next higher bid.
     function _creditRefund(address to, address paymentAsset, uint256 amount) private {
         if (amount == 0) return;
+        if (_tryRefund(to, paymentAsset, amount)) {
+            emit RefundSent(to, paymentAsset, amount);
+            return;
+        }
         pendingRefunds[to][paymentAsset] += amount;
         emit RefundCredited(to, paymentAsset, amount);
+    }
+
+    /// @dev Non-reverting refund attempt used only before the pull-credit fallback.
+    function _tryRefund(address to, address paymentAsset, uint256 amount) private returns (bool) {
+        if (paymentAsset == address(0)) {
+            (bool sent,) = payable(to).call{value: amount}("");
+            return sent;
+        }
+        (bool called, bytes memory result) = paymentAsset.call(abi.encodeCall(IERC20.transfer, (to, amount)));
+        if (!called) return false;
+        if (result.length == 0) return true;
+        if (result.length < 32) return false;
+        // A malformed token must not turn the best-effort push into a revert.
+        // Treat any non-zero word as success and otherwise use pendingRefunds.
+        uint256 returned;
+        assembly ("memory-safe") {
+            returned := mload(add(result, 32))
+        }
+        return returned != 0;
     }
 
     /// @dev Safely attempts payment quoting without reverting the caller.

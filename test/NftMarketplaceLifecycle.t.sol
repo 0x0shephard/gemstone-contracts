@@ -122,6 +122,78 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         assertEq(bidder.balance, bidderBefore);
     }
 
+    function testListedTokenBidSettlesAutomaticallyAfterTwentyFourHours() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction");
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_100e18);
+        vm.stopPrank();
+
+        uint256 sellerBefore = buyer.balance;
+        vm.prank(bidder);
+        uint256 offerId = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+
+        assertEq(marketplace.listingWinningOffer(tokenId), offerId);
+        vm.expectRevert(Marketplace.AuctionNotEnded.selector);
+        marketplace.settleListingAuction(tokenId);
+
+        vm.warp(block.timestamp + 1 days);
+        ethFeed.updateAnswer(2_000e8);
+        assertTrue(marketplace.settleListingAuction(tokenId));
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(buyer.balance - sellerBefore, 0.539 ether);
+        assertEq(platform.balance, 0.011 ether);
+        (address listedSeller,) = marketplace.listings(tokenId);
+        assertEq(listedSeller, address(0));
+    }
+
+    function testHigherListedTokenBidRefundsLosingWalletImmediately() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction-outbid");
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_100e18);
+        vm.stopPrank();
+
+        uint256 bidderBefore = bidder.balance;
+        vm.prank(bidder);
+        uint256 first = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+        vm.prank(stranger);
+        uint256 second = marketplace.createOffer{value: 0.6 ether}(tokenId, address(0), 0.6 ether);
+
+        assertEq(bidder.balance, bidderBefore);
+        assertEq(marketplace.pendingRefunds(bidder, address(0)), 0);
+        assertEq(marketplace.listingWinningOffer(tokenId), second);
+        (,,,,,, bool firstActive) = marketplace.offers(first);
+        assertFalse(firstActive);
+    }
+
+    function testListedTokenBidMustMeetAskAndLocksListing() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction-floor");
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_100e18);
+        vm.stopPrank();
+
+        vm.prank(bidder);
+        vm.expectRevert(Marketplace.BidTooLow.selector);
+        marketplace.createOffer{value: 0.5 ether}(tokenId, address(0), 0.5 ether);
+
+        vm.prank(bidder);
+        marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+
+        vm.prank(buyer);
+        vm.expectRevert(Marketplace.AuctionActive.selector);
+        marketplace.cancel(tokenId);
+
+        vm.prank(stranger);
+        vm.expectRevert(Marketplace.AuctionActive.selector);
+        marketplace.buy{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+    }
+
     function testOfferAcceptanceFundsReserveShortfall() public {
         (uint256 gemId, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://market-offer-reserve");
         reserveManager.setMinimumReserveUsd(gemId, 100e18);
