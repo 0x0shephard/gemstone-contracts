@@ -130,6 +130,32 @@ contract SwapEscrowLogicTest is BaseTest {
         swapEscrow.cancelOffer(offerId);
     }
 
+    function testAnyoneCanClearExpiredOfferAndRefundProposer() public {
+        (, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-expired-cleanup-a");
+        (, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-expired-cleanup-b");
+
+        uint256 buyerBefore = buyer.balance;
+        vm.startPrank(buyer);
+        nft.approve(address(swapEscrow), firstTokenId);
+        uint256 offerId = swapEscrow.createOffer{value: 0.1 ether}(
+            firstTokenId, secondTokenId, address(0), 0.1 ether, true, uint64(block.timestamp + 1 days)
+        );
+        vm.stopPrank();
+
+        vm.prank(stranger);
+        vm.expectRevert(SwapEscrow.NotExpired.selector);
+        swapEscrow.cancelExpiredOffer(offerId);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(stranger);
+        swapEscrow.cancelExpiredOffer(offerId);
+
+        assertEq(nft.ownerOf(firstTokenId), buyer);
+        assertEq(buyer.balance, buyerBefore);
+        (,,,,,,, bool active) = swapEscrow.offers(offerId);
+        assertFalse(active);
+    }
+
     function testAcceptOfferRejectsExpiredOfferWithoutDeletingIt() public {
         (, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-expired-a");
         (, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-expired-b");

@@ -64,6 +64,7 @@ contract SwapEscrow is
     error InvalidOffer();
     error NotProposer();
     error Expired();
+    error NotExpired();
     error InvalidAmount();
     error TransferFailed();
     error GemNotMinted();
@@ -168,6 +169,20 @@ contract SwapEscrow is
         SwapOffer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
         if (offer.proposer != msg.sender) revert NotProposer();
+        _cancelOffer(offerId, offer);
+    }
+
+    /// @notice Clears an expired offer and returns every escrowed asset to its proposer.
+    /// @dev Permissionless after expiry so abandoned mobile sessions cannot strand an NFT.
+    /// @param offerId Expired swap offer id to clear.
+    function cancelExpiredOffer(uint256 offerId) external nonReentrant {
+        SwapOffer memory offer = offers[offerId];
+        if (!offer.active) revert InvalidOffer();
+        if (block.timestamp <= offer.expiry) revert NotExpired();
+        _cancelOffer(offerId, offer);
+    }
+
+    function _cancelOffer(uint256 offerId, SwapOffer memory offer) private {
         delete offers[offerId];
 
         nft.safeTransferFrom(address(this), offer.proposer, offer.offeredTokenId);
