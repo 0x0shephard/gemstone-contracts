@@ -27,11 +27,18 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
 
     mapping(address token => TokenConfig) public tokenConfig;
 
+    // Appended for the V2 implementation. Configured assets are enumerable so
+    // each deployment can advertise its own payment set without hard-coding a
+    // Sepolia mock token or a production stablecoin in the client.
+    address[] private _paymentTokens;
+    mapping(address token => bool known) private _paymentTokenKnown;
+
     event PaymentTokenSet(
         address indexed token, address indexed feed, uint48 staleAfter, uint8 tokenDecimals, bool enabled
     );
     event PaymentTokenRemoved(address indexed token);
     event PaymentTokenBoundsSet(address indexed token, int192 minAnswer, int192 maxAnswer);
+    event PaymentTokenTracked(address indexed token);
 
     error InvalidAddress();
     error InvalidFeed();
@@ -54,6 +61,18 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(Roles.UPGRADER_ROLE, admin);
+    }
+
+    /// @notice Backfills enumeration when upgrading an existing V1 proxy.
+    /// @dev New deployments are tracked automatically by `setToken`.
+    /// @param existingTokens Previously configured assets, including address(0)
+    ///        when native currency payments are configured.
+    function initializeV2(address[] calldata existingTokens) external reinitializer(2) onlyRole(DEFAULT_ADMIN_ROLE) {
+        for (uint256 i = 0; i < existingTokens.length; i++) {
+            address token = existingTokens[i];
+            if (tokenConfig[token].feed == address(0)) revert TokenNotEnabled();
+            _trackPaymentToken(token);
+        }
     }
 
     /// @notice Adds or updates a payment token and its USD oracle feed.
@@ -83,6 +102,7 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
             minAnswer: previous.minAnswer,
             maxAnswer: previous.maxAnswer
         });
+        _trackPaymentToken(token);
         emit PaymentTokenSet(token, feed, staleAfter, tokenDecimals, enabled);
     }
 
@@ -110,6 +130,18 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
     /// @param token Token address, or address(0) for native ETH.
     function isEnabled(address token) external view returns (bool) {
         return tokenConfig[token].enabled;
+    }
+
+    /// @notice Returns the number of payment assets ever configured.
+    /// @dev Removed assets remain enumerable with `enabled == false`, allowing
+    ///      clients to describe historical payments safely.
+    function paymentTokenCount() external view returns (uint256) {
+        return _paymentTokens.length;
+    }
+
+    /// @notice Returns a configured payment asset by index.
+    function paymentTokenAt(uint256 index) external view returns (address) {
+        return _paymentTokens[index];
     }
 
     /// @notice Quotes a token amount into 18-decimal USD.
@@ -155,6 +187,13 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
         // forge-lint: disable-next-line(unsafe-typecast)
         answer = uint256(signedAnswer);
         feedDecimals = feed.decimals();
+    }
+
+    function _trackPaymentToken(address token) private {
+        if (_paymentTokenKnown[token]) return;
+        _paymentTokenKnown[token] = true;
+        _paymentTokens.push(token);
+        emit PaymentTokenTracked(token);
     }
 
     /// @dev Authorizes UUPS upgrades for `UPGRADER_ROLE` holders.

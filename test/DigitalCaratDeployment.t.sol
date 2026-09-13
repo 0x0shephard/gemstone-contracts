@@ -116,9 +116,11 @@ contract DigitalCaratDeploymentTest is BaseTest {
         payments.setToken(address(0), deploymentEthFeed, 1 days, false);
         payments.setTokenBounds(address(0), 500e8, 10_000e8);
         payments.setToken(address(0), deploymentEthFeed, 1 days, true);
-        reserveManager.setDefaultReserveBps(500);
-        ReserveManager.ReserveBracket[] memory brackets = new ReserveManager.ReserveBracket[](1);
-        brackets[0] = ReserveManager.ReserveBracket({minPriceUsd: 0, maxPriceUsd: type(uint256).max, reserveBps: 500});
+        reserveManager.setDefaultReserveBps(1_000);
+        ReserveManager.ReserveBracket[] memory brackets = new ReserveManager.ReserveBracket[](2);
+        brackets[0] = ReserveManager.ReserveBracket({minPriceUsd: 0, maxPriceUsd: 1_000e18, reserveBps: 1_500});
+        brackets[1] =
+            ReserveManager.ReserveBracket({minPriceUsd: 1_000e18, maxPriceUsd: type(uint256).max, reserveBps: 1_000});
         reserveManager.setReserveBrackets(brackets);
 
         registry.setSellerApproval(seller, true);
@@ -130,10 +132,10 @@ contract DigitalCaratDeploymentTest is BaseTest {
 
         vm.deal(buyer, 1 ether);
         vm.prank(buyer);
-        uint256 tokenId = sale.buyNow{value: 0.525 ether}(gemId, address(0), 0.525 ether);
+        uint256 tokenId = sale.buyNow{value: 0.55 ether}(gemId, address(0), 0.55 ether);
 
         assertEq(nft.ownerOf(tokenId), buyer);
-        assertEq(reserveManager.reserveBalanceUsd(gemId), 50e18);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
         assertTrue(swapEscrow.hasRole(Roles.UPGRADER_ROLE, admin));
         assertTrue(compliance.hasRole(Roles.COMPLIANCE_ROLE, admin));
     }

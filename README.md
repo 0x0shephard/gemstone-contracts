@@ -46,14 +46,16 @@ Required env vars:
 
 ```sh
 PRIVATE_KEY=
-SEPOLIA_RPC_URL=
+RPC_URL=
+EXPECTED_CHAIN_ID=
+PRODUCTION_DEPLOYMENT=false
 ETH_USD_FEED=
 ETH_USD_MIN_ANSWER=
 ETH_USD_MAX_ANSWER=
 PRICE_STALE_AFTER=86400
-DEFAULT_RESERVE_BPS=500
+DEFAULT_RESERVE_BPS=1000
 RESERVE_BRACKET_MAX_USD=1000000000000000000000,115792089237316195423570985008687907853269984665640564039457584007913129639935
-RESERVE_BRACKET_BPS=1000,400
+RESERVE_BRACKET_BPS=1500,1000
 ```
 
 For Ethereum Sepolia, copy `.env.sepolia.example` to `.env`, add a dedicated
@@ -78,10 +80,14 @@ PAYMENT_TOKEN_MAX_ANSWERS=120000000,120000000
 Notes:
 
 - Native ETH is configured from `ETH_USD_FEED` and its mandatory minimum/maximum answer bounds.
-- ERC-20 payment tokens are configured from optional comma-separated token/feed/minimum/maximum lists. All four lists must have equal length.
+- ERC-20 payment tokens are configured from optional comma-separated token/feed/minimum/maximum lists. All four lists must have equal length. Token symbols and decimal counts are discovered at runtime, so the same contracts support production USDC, USDT, or another approved asset on any EVM L2.
 - Reserve bracket values are 18-decimal USD values.
 - Bracket minimums are inferred from zero and the previous bracket max.
 - Recipient env vars default to the deployer if omitted.
+- `EXPECTED_CHAIN_ID` prevents a deployment through the wrong RPC. Set
+  `PRODUCTION_DEPLOYMENT=true` for a live-value L2; the script then rejects
+  Sepolia, deployer-default treasury recipients, and a missing production
+  stablecoin.
 - `SECONDARY_FEE_BPS` defaults to `200` when omitted.
 
 ### Optional Sepolia payment mocks
@@ -99,8 +105,37 @@ forge script script/DeploySepoliaMocks.s.sol:DeploySepoliaMocks \
 The script prints the resulting `PAYMENT_TOKENS`,
 `PAYMENT_TOKEN_USD_FEEDS`, `PAYMENT_TOKEN_MIN_ANSWERS`, and
 `PAYMENT_TOKEN_MAX_ANSWERS` values. The mock token and oracle are for Sepolia
-testing only; the default `.env.sepolia.example` continues to reference Circle
-testnet USDC and the existing USDC/USD feed.
+testing only. The checked-in Sepolia example references the current Digital
+Carat mUSDC and its test-only feed; never copy those addresses to production.
+
+### In-place payment registry upgrade
+
+The V2 payment registry keeps the existing proxy address and storage while
+adding enumeration for deployment-specific payment assets. Backfill the assets
+already configured on the proxy during the upgrade:
+
+```sh
+PAYMENT_TOKEN_REGISTRY_ADDRESS=0x... \
+PAYMENT_TOKEN_BACKFILL=0x0000000000000000000000000000000000000000,0xStablecoin \
+forge script script/UpgradePaymentTokenRegistry.s.sol:UpgradePaymentTokenRegistry \
+  --rpc-url "$RPC_URL" --broadcast --slow
+```
+
+Apply the updated 15%/10% reserve schedule without replacing the existing
+ReserveManager proxy:
+
+```sh
+RESERVE_MANAGER_ADDRESS=0x... \
+DEFAULT_RESERVE_BPS=1000 \
+RESERVE_BRACKET_MAX_USD=1000000000000000000000,115792089237316195423570985008687907853269984665640564039457584007913129639935 \
+RESERVE_BRACKET_BPS=1500,1000 \
+forge script script/ConfigureReservePolicy.s.sol:ConfigureReservePolicy \
+  --rpc-url "$RPC_URL" --broadcast --slow
+```
+
+For Arbitrum or another EVM L2, start from `.env.l2.example`, use that chain's
+canonical token and oracle addresses, and deploy the same proxy suite. Sepolia
+continues to use mUSDC; payment assets are configuration, not hard-coded protocol state.
 
 Mint test mUSDC from its owner account:
 
@@ -113,6 +148,18 @@ forge script script/MintSepoliaMockUSDC.s.sol:MintSepoliaMockUSDC \
 ```
 
 `MOCK_USDC_AMOUNT` is in six-decimal base units; the example mints 10,000 mUSDC.
+
+Deploy a permissionless testnet faucet while preserving the same mUSDC address:
+
+```sh
+MOCK_USDC_ADDRESS=0x... \
+forge script script/DeploySepoliaMockUSDCFaucet.s.sol:DeploySepoliaMockUSDCFaucet \
+  --rpc-url "$SEPOLIA_RPC_URL" --broadcast --slow
+```
+
+The deployment transfers mUSDC ownership to the faucet. Each public `claim()`
+mints exactly 10,000 mUSDC to its caller. The faucet admin can pause claims or
+recover token ownership if the faucet needs to be retired.
 
 ### Approved gemstone activation
 

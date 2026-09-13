@@ -33,11 +33,22 @@ contract DeployDigitalCarat is Script {
     function run() external returns (Deployment memory deployment) {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.addr(deployerKey);
+        uint256 expectedChainId = vm.envOr("EXPECTED_CHAIN_ID", block.chainid);
+        bool productionDeployment = vm.envOr("PRODUCTION_DEPLOYMENT", false);
+        require(block.chainid == expectedChainId, "RPC chain does not match EXPECTED_CHAIN_ID");
 
         address platformRecipient = vm.envOr("PLATFORM_RECIPIENT", admin);
         address vaultReserveRecipient = vm.envOr("VAULT_RESERVE_RECIPIENT", admin);
         address insuranceReserveRecipient = vm.envOr("INSURANCE_RESERVE_RECIPIENT", admin);
         address treasuryReserveRecipient = vm.envOr("TREASURY_RESERVE_RECIPIENT", admin);
+        if (productionDeployment) {
+            require(block.chainid != 11155111, "Production cannot target Sepolia");
+            require(
+                platformRecipient != admin && vaultReserveRecipient != admin && insuranceReserveRecipient != admin
+                    && treasuryReserveRecipient != admin,
+                "Production recipients must not default to deployer"
+            );
+        }
 
         vm.startBroadcast(deployerKey);
 
@@ -149,7 +160,7 @@ contract DeployDigitalCarat is Script {
                 ))
         );
 
-        _configurePayments(deployment.payments);
+        _configurePayments(deployment.payments, productionDeployment);
         _configureReservePolicy(deployment.reserveManager);
         deployment.marketplace.setSecondaryFeeRecipient(platformRecipient);
         uint256 secondaryFeeBps = vm.envOr("SECONDARY_FEE_BPS", uint256(200));
@@ -192,7 +203,7 @@ contract DeployDigitalCarat is Script {
         console2.log("SwapEscrow", address(deployment.swapEscrow));
     }
 
-    function _configurePayments(PaymentTokenRegistry payments) private {
+    function _configurePayments(PaymentTokenRegistry payments, bool productionDeployment) private {
         uint48 staleAfter = uint48(vm.envUint("PRICE_STALE_AFTER"));
         _configurePaymentToken(
             payments,
@@ -213,8 +224,10 @@ contract DeployDigitalCarat is Script {
             tokens.length == feeds.length && tokens.length == minAnswers.length && tokens.length == maxAnswers.length,
             "PAYMENT_TOKENS configuration length mismatch"
         );
+        if (productionDeployment) require(tokens.length != 0, "Production stablecoin missing");
 
         for (uint256 i = 0; i < tokens.length; i++) {
+            require(tokens[i] != address(0), "PAYMENT_TOKENS cannot contain native asset");
             _configurePaymentToken(payments, tokens[i], feeds[i], staleAfter, minAnswers[i], maxAnswers[i]);
         }
     }

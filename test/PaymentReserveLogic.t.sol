@@ -243,4 +243,31 @@ contract PaymentReserveLogicTest is BaseTest {
         vm.expectRevert(ReserveManager.InvalidReserveBracket.selector);
         reserveManager.setReserveBrackets(brackets);
     }
+
+    function testPaymentAssetsAreEnumerableAcrossDisableAndReenable() public {
+        assertEq(payments.paymentTokenCount(), 3);
+        assertEq(payments.paymentTokenAt(0), address(0));
+        assertEq(payments.paymentTokenAt(1), address(usdc));
+        assertEq(payments.paymentTokenAt(2), address(feeToken));
+
+        payments.removeToken(address(usdc));
+        assertFalse(payments.isEnabled(address(usdc)));
+        assertEq(payments.paymentTokenCount(), 3);
+
+        _configurePaymentToken(address(usdc), address(usdFeed), 80_000_000, 120_000_000);
+        assertTrue(payments.isEnabled(address(usdc)));
+        assertEq(payments.paymentTokenCount(), 3);
+    }
+
+    function testV2BackfillIsIdempotentForAlreadyTrackedAssets() public {
+        address[] memory existingTokens = new address[](2);
+        existingTokens[0] = address(0);
+        existingTokens[1] = address(usdc);
+
+        payments.initializeV2(existingTokens);
+
+        assertEq(payments.paymentTokenCount(), 3);
+        assertEq(payments.paymentTokenAt(0), address(0));
+        assertEq(payments.paymentTokenAt(1), address(usdc));
+    }
 }

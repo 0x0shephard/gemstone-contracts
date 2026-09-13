@@ -3,7 +3,7 @@
   "network": "ethereum-sepolia",
   "chainId": 11155111,
   "deploymentBlock": 11342041,
-  "lastDeploymentBlock": 11342088,
+  "lastDeploymentBlock": 11695795,
   "admin": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
   "addresses": {
     "DGENFT": "0x40FE3f22f2B6Ea5e0436f56c0d821bEF8D4c39f6",
@@ -17,16 +17,28 @@
     "Marketplace": "0x9C1aD06bA5702EA40131dAD626572b74C411F93A",
     "SwapEscrow": "0xCadC4f1d3F3be596eD205437BA3b0B12B69A4888"
   },
+  "implementations": {
+    "PaymentTokenRegistry": "0x563e83ef30A9a91174613B9a9eeD3383f468D2C7"
+  },
   "paymentAssets": {
     "nativeEth": "0x0000000000000000000000000000000000000000",
     "mockUsdc": "0x29f4b1eF7261A372DB73493004CCf6A28175Dc54",
-    "mockUsdcUsdFeed": "0x3B2FD5faae46fcE73e4d7ef17c6100F1Dadb8b69"
+    "mockUsdcUsdFeed": "0x3B2FD5faae46fcE73e4d7ef17c6100F1Dadb8b69",
+    "mockUsdcFaucet": "0x387898839e6EB38886D5C0E9c6a94f6f75C1E9C8"
   },
   "configuration": {
     "priceStaleAfterSeconds": 86400,
     "mockUsdcMinAnswer": 80000000,
     "mockUsdcMaxAnswer": 120000000,
-    "defaultReserveBps": 500,
+    "defaultReserveBps": 1000,
+    "reserveBrackets": [
+      { "minPriceUsd": "0", "maxPriceUsd": "1000000000000000000000", "reserveBps": 1500 },
+      {
+        "minPriceUsd": "1000000000000000000000",
+        "maxPriceUsd": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "reserveBps": 1000
+      }
+    ],
     "secondaryFeeBps": 200
   }
 }
