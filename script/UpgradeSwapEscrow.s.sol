@@ -9,6 +9,7 @@ import {SwapEscrow} from "../src/SwapEscrow.sol";
 contract UpgradeSwapEscrow is Script {
     function run() external returns (address implementation) {
         uint256 adminKey = vm.envUint("PRIVATE_KEY");
+        require(block.chainid == vm.envUint("EXPECTED_CHAIN_ID"), "RPC chain does not match EXPECTED_CHAIN_ID");
         address proxy = vm.envAddress("SWAP_ESCROW_ADDRESS");
 
         vm.startBroadcast(adminKey);

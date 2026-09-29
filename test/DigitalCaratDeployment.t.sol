@@ -97,6 +97,12 @@ contract DigitalCaratDeploymentTest is BaseTest {
                 ))
         );
 
+        address[] memory trustedEscrows = new address[](3);
+        trustedEscrows[0] = address(marketplace);
+        trustedEscrows[1] = address(swapEscrow);
+        trustedEscrows[2] = giftOperator;
+        nft.initializeReserveGuard(reserveManager, trustedEscrows, new uint256[](0), new address[](0));
+
         nft.grantRole(Roles.MINTER_ROLE, address(sale));
         nft.grantRole(Roles.BURNER_ROLE, address(redemption));
         nft.grantRole(Roles.LOCKER_ROLE, address(redemption));
@@ -138,5 +144,9 @@ contract DigitalCaratDeploymentTest is BaseTest {
         assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
         assertTrue(swapEscrow.hasRole(Roles.UPGRADER_ROLE, admin));
         assertTrue(compliance.hasRole(Roles.COMPLIANCE_ROLE, admin));
+        assertEq(address(nft.reserveManager()), address(reserveManager));
+        assertTrue(nft.trustedEscrow(address(marketplace)));
+        assertTrue(nft.trustedEscrow(address(swapEscrow)));
+        assertTrue(nft.trustedEscrow(giftOperator));
     }
 }

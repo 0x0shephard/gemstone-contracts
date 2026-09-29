@@ -486,8 +486,13 @@ contract DigitalCaratHandler is Test {
             uint256 usdcUsd = paymentQuoteOrZero(address(usdc), usdcAssetBalance);
             if (nativeUsd + usdcUsd != 0) assertLe(reserveBalance, nativeUsd + usdcUsd);
         }
-        assertGe(address(reserveManager).balance, nativeAssetTotal);
-        assertGe(usdc.balanceOf(address(reserveManager)), usdcAssetTotal);
+        assertGe(
+            address(reserveManager).balance, nativeAssetTotal + reserveManager.totalPendingReserveClaims(address(0))
+        );
+        assertGe(
+            usdc.balanceOf(address(reserveManager)),
+            usdcAssetTotal + reserveManager.totalPendingReserveClaims(address(usdc))
+        );
         assertEq(reserveManager.totalReserveBalanceUsd(), reserveTotal);
         assertEq(reserveManager.totalProjectedLiabilitiesUsd(), liabilityTotal);
         if (liabilityTotal == 0) {

@@ -42,6 +42,10 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     mapping(address asset => uint256 amount) public totalReserveAssetBalance;
     address[] private _reserveAssetTypes;
     mapping(address asset => bool tracked) private _reserveAssetTypeTracked;
+    // Appended for UUPS storage compatibility. Redemption payouts are credited
+    // before burn and pulled later so rejecting smart wallets cannot block finality.
+    mapping(address beneficiary => mapping(address asset => uint256 amount)) public pendingReserveClaims;
+    mapping(address asset => uint256 amount) public totalPendingReserveClaims;
 
     event DefaultReserveBpsUpdated(uint16 reserveBps);
     event ReserveBracketsUpdated();
@@ -61,6 +65,10 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     event UnderfundedGemUpdated(uint256 indexed gemId, bool underfunded);
     event MinimumCoverageBpsUpdated(uint16 minimumCoverageBps);
     event GlobalSolvencyCheckUpdated(bool enabled);
+    event ReserveClaimCredited(
+        uint256 indexed gemId, address indexed beneficiary, address indexed asset, uint256 amount, bytes32 reasonHash
+    );
+    event ReserveClaimed(address indexed beneficiary, address indexed recipient, address indexed asset, uint256 amount);
 
     error InvalidAddress();
     error InvalidAmount();
@@ -302,7 +310,8 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     }
 
     /// @notice Releases all tracked reserve assets for a gem.
-    /// @dev Used on completed redemption; clears all remaining USD reserve accounting for the gem.
+    /// @dev Direct synchronous release for administrative protocol flows. Redemption uses
+    ///      `creditAllReserveAssets` so a rejecting holder cannot block finalization.
     /// @param gemId Existing gem id.
     /// @param recipient Destination for released assets.
     /// @param reasonHash Off-chain release reason hash.
@@ -334,6 +343,58 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
             _recordedTotalReserveBalanceUsd -= usdBalance;
             _refreshUnderfundedGem(gemId);
         }
+    }
+
+    /// @notice Converts every remaining reserve asset for a redeemed gem into a pull claim.
+    /// @dev No external transfer occurs, so a beneficiary with a reverting receive hook cannot
+    ///      block redemption confirmation or burn. Callable only by a reserve operator.
+    /// @param gemId Existing gem id whose reserve is being discharged.
+    /// @param beneficiary Holder entitled to claim the assets after redemption.
+    /// @param reasonHash Off-chain credit reason hash.
+    /// @return creditedCount Number of non-zero asset balances credited.
+    function creditAllReserveAssets(uint256 gemId, address beneficiary, bytes32 reasonHash)
+        external
+        whenNotPaused
+        onlyRole(Roles.RESERVE_OPERATOR_ROLE)
+        returns (uint256 creditedCount)
+    {
+        _requireExistingGem(gemId);
+        if (beneficiary == address(0)) revert InvalidAmount();
+
+        address[] storage assets = _reserveAssets[gemId];
+        for (uint256 i = 0; i < assets.length; i++) {
+            address asset = assets[i];
+            uint256 amount = reserveAssetBalance[gemId][asset];
+            if (amount == 0) continue;
+            reserveAssetBalance[gemId][asset] = 0;
+            totalReserveAssetBalance[asset] -= amount;
+            pendingReserveClaims[beneficiary][asset] += amount;
+            totalPendingReserveClaims[asset] += amount;
+            emit ReserveClaimCredited(gemId, beneficiary, asset, amount, reasonHash);
+            creditedCount++;
+        }
+
+        uint256 usdBalance = _recordedReserveBalanceUsd[gemId];
+        if (usdBalance != 0) {
+            _recordedReserveBalanceUsd[gemId] = 0;
+            _recordedTotalReserveBalanceUsd -= usdBalance;
+            _refreshUnderfundedGem(gemId);
+        }
+    }
+
+    /// @notice Claims the caller's full credit for one asset to a chosen recipient.
+    /// @dev The beneficiary chooses `recipient`; custodians and reserve operators cannot redirect it.
+    /// @param asset Credited asset, or address(0) for native ETH.
+    /// @param recipient Destination selected by the credited beneficiary.
+    /// @return amount Amount transferred.
+    function claimReserveCredit(address asset, address recipient) external whenNotPaused returns (uint256 amount) {
+        if (recipient == address(0)) revert InvalidAmount();
+        amount = pendingReserveClaims[msg.sender][asset];
+        if (amount == 0) revert InvalidAmount();
+        pendingReserveClaims[msg.sender][asset] = 0;
+        totalPendingReserveClaims[asset] -= amount;
+        _sendAsset(asset, recipient, amount);
+        emit ReserveClaimed(msg.sender, recipient, asset, amount);
     }
 
     /// @notice Returns the current oracle-valued reserve balance for a gem.

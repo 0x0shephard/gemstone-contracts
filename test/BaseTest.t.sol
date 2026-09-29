@@ -45,6 +45,7 @@ abstract contract BaseTest is Test {
     address internal treasuryReserve = address(0x700);
     address internal feeCollector = address(0x800);
     address internal stranger = address(0x900);
+    address internal giftOperator = address(0xA00);
 
     function setUp() public virtual {
         _deployProtocol();
@@ -132,6 +133,13 @@ abstract contract BaseTest is Test {
                     )
                 ))
         );
+        address[] memory escrows = new address[](3);
+        escrows[0] = address(marketplace);
+        escrows[1] = address(swapEscrow);
+        escrows[2] = giftOperator;
+        uint256[] memory legacyTokenIds = new uint256[](0);
+        address[] memory legacyDepositors = new address[](0);
+        nft.initializeReserveGuard(reserveManager, escrows, legacyTokenIds, legacyDepositors);
         marketplace.setSecondaryFeeRecipient(platform);
     }
 
@@ -205,6 +213,10 @@ abstract contract BaseTest is Test {
         gemId = _listedGem(priceUsd, uri);
         vm.prank(owner);
         tokenId = sale.buyNow{value: (priceUsd / 2_000)}(gemId, address(0), priceUsd / 2_000);
+        // Most lifecycle tests predate the transfer guard and exercise the positive-reserve path.
+        // One wei is deliberately enough; dedicated guard tests cover the exact zero boundary.
+        vm.prank(owner);
+        reserveManager.fundNative{value: 1}(gemId);
     }
 
     function _setTwoTierReservePolicy() internal {

@@ -6,6 +6,7 @@ import {DGENFT} from "../src/DGENFT.sol";
 import {Marketplace} from "../src/Marketplace.sol";
 import {PrimarySaleAuction} from "../src/PrimarySaleAuction.sol";
 import {ReserveManager} from "../src/ReserveManager.sol";
+import {SwapEscrow} from "../src/SwapEscrow.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 import {BaseTest} from "./BaseTest.t.sol";
@@ -34,7 +35,6 @@ contract DigitalCaratProtocolTest is BaseTest {
 
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
-
         assertEq(nft.ownerOf(tokenId), buyer);
         assertEq(nft.tokenGem(tokenId), gemId);
         assertEq(treasury.pendingNative(seller), 0.4 ether);
@@ -246,7 +246,6 @@ contract DigitalCaratProtocolTest is BaseTest {
 
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
-
         assertEq(nft.ownerOf(tokenId), buyer);
         assertGe(reserveManager.reserveBalanceUsd(gemId), 1e18);
     }
@@ -373,7 +372,6 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-redeem");
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
-
         vm.prank(buyer);
         redemption.requestRedemption(tokenId, keccak256("pickup"));
 
@@ -394,7 +392,6 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-redeem-reserve");
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
-
         reserveManager.setMinimumReserveUsd(gemId, 100e18);
 
         vm.prank(buyer);
@@ -414,6 +411,8 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market");
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(gemId);
 
         vm.startPrank(buyer);
         nft.approve(address(marketplace), tokenId);
@@ -438,6 +437,8 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market-native-refund");
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(gemId);
 
         vm.startPrank(buyer);
         nft.approve(address(marketplace), tokenId);
@@ -457,6 +458,8 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market-usdc-refund");
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(gemId);
 
         vm.startPrank(buyer);
         nft.approve(address(marketplace), tokenId);
@@ -478,6 +481,8 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-market-reserve");
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(gemId);
         reserveManager.setMinimumReserveUsd(gemId, 100e18);
 
         vm.startPrank(buyer);
@@ -493,7 +498,7 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.stopPrank();
 
         assertEq(nft.ownerOf(tokenId), bidder);
-        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertGe(reserveManager.reserveBalanceUsd(gemId), 100e18);
         assertEq(reserveManager.reserveAssetBalance(gemId, address(usdc)), 100e6);
     }
 
@@ -501,10 +506,14 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 firstGemId = _listedGem(1_000e18, "ipfs://gem-swap-a");
         vm.prank(buyer);
         uint256 firstTokenId = sale.buyNow{value: 0.5 ether}(firstGemId, address(0), 0.5 ether);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(firstGemId);
 
         uint256 secondGemId = _listedGem(1_000e18, "ipfs://gem-swap-b");
         vm.prank(bidder);
         uint256 secondTokenId = sale.buyNow{value: 0.5 ether}(secondGemId, address(0), 0.5 ether);
+        vm.prank(bidder);
+        reserveManager.fundNative{value: 1}(secondGemId);
 
         vm.startPrank(buyer);
         nft.approve(address(swapEscrow), firstTokenId);
@@ -525,10 +534,14 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 firstGemId = _listedGem(1_000e18, "ipfs://gem-swap-cash-a");
         vm.prank(buyer);
         uint256 firstTokenId = sale.buyNow{value: 0.5 ether}(firstGemId, address(0), 0.5 ether);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(firstGemId);
 
         uint256 secondGemId = _listedGem(1_000e18, "ipfs://gem-swap-cash-b");
         vm.prank(bidder);
         uint256 secondTokenId = sale.buyNow{value: 0.5 ether}(secondGemId, address(0), 0.5 ether);
+        vm.prank(bidder);
+        reserveManager.fundNative{value: 1}(secondGemId);
 
         vm.startPrank(buyer);
         nft.approve(address(swapEscrow), firstTokenId);
@@ -553,10 +566,14 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 firstGemId = _listedGem(1_000e18, "ipfs://gem-swap-reserve-a");
         vm.prank(buyer);
         uint256 firstTokenId = sale.buyNow{value: 0.5 ether}(firstGemId, address(0), 0.5 ether);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(firstGemId);
 
         uint256 secondGemId = _listedGem(1_000e18, "ipfs://gem-swap-reserve-b");
         vm.prank(bidder);
         uint256 secondTokenId = sale.buyNow{value: 0.5 ether}(secondGemId, address(0), 0.5 ether);
+        vm.prank(bidder);
+        reserveManager.fundNative{value: 1}(secondGemId);
 
         vm.startPrank(buyer);
         nft.approve(address(swapEscrow), firstTokenId);
@@ -564,11 +581,14 @@ contract DigitalCaratProtocolTest is BaseTest {
             swapEscrow.createOffer(firstTokenId, secondTokenId, address(0), 0, false, uint64(block.timestamp + 1 days));
         vm.stopPrank();
 
+        // One wei of reserve is enough to swap; an emptied reserve is not.
         reserveManager.setMinimumReserveUsd(secondGemId, 100e18);
+        reserveManager.releaseAllReserveAssets(secondGemId, bidder, keccak256("TEST_DEPLETION"));
+        assertEq(reserveManager.reserveBalanceUsd(secondGemId), 0);
 
         vm.startPrank(bidder);
         nft.approve(address(swapEscrow), secondTokenId);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(SwapEscrow.ReserveCoverageTooLow.selector, secondGemId, 100e18, 0));
         swapEscrow.acceptOffer(offerId);
         vm.stopPrank();
     }

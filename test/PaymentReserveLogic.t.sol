@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {PaymentTokenRegistry} from "../src/PaymentTokenRegistry.sol";
 import {ReserveManager} from "../src/ReserveManager.sol";
+import {RedemptionManager} from "../src/RedemptionManager.sol";
 import {GemRegistry} from "../src/GemRegistry.sol";
 import {BaseTest} from "./BaseTest.t.sol";
 import {MockV3Aggregator} from "./mocks/MockV3Aggregator.sol";
@@ -186,7 +188,7 @@ contract PaymentReserveLogicTest is BaseTest {
         reserveManager.requireSolvent();
     }
 
-    function testReserveAssetsCanBeReleasedAndRedemptionClearsCoverage() public {
+    function testRedemptionCreditsHolderWhoCanClaimToChosenRecipient() public {
         _setTwoTierReservePolicy();
         uint256 gemId = _listedGem(1_000e18, "ipfs://reserve-release");
 
@@ -195,16 +197,54 @@ contract PaymentReserveLogicTest is BaseTest {
         assertEq(reserveManager.reserveBalanceUsd(gemId), 40e18);
         assertEq(reserveManager.totalReserveBalanceUsd(), 40e18);
 
+        uint256 holderBefore = buyer.balance;
         uint256 custodianBefore = custodian.balance;
         vm.prank(buyer);
         redemption.requestRedemption(tokenId, keccak256("release-reserve"));
         vm.prank(custodian);
         redemption.confirmRedemption(tokenId);
 
-        assertEq(custodian.balance - custodianBefore, 0.02 ether);
+        assertEq(buyer.balance, holderBefore);
+        assertEq(custodian.balance, custodianBefore);
+        assertEq(reserveManager.pendingReserveClaims(buyer, address(0)), 0.02 ether);
+        assertEq(reserveManager.totalPendingReserveClaims(address(0)), 0.02 ether);
         assertEq(reserveManager.reserveBalanceUsd(gemId), 0);
         assertEq(reserveManager.totalReserveBalanceUsd(), 0);
         assertEq(reserveManager.reserveAssetBalance(gemId, address(0)), 0);
+
+        vm.prank(buyer);
+        reserveManager.claimReserveCredit(address(0), buyer);
+        assertEq(buyer.balance - holderBefore, 0.02 ether);
+        assertEq(reserveManager.pendingReserveClaims(buyer, address(0)), 0);
+        assertEq(reserveManager.totalPendingReserveClaims(address(0)), 0);
+    }
+
+    function testRejectingSmartWalletDoesNotBlockBurnAndCanClaimToEoa() public {
+        _setTwoTierReservePolicy();
+        RejectingReserveHolder holder = new RejectingReserveHolder();
+        address payoutRecipient = address(0xBEEF);
+        vm.deal(address(holder), 1 ether);
+
+        uint256 gemId = _listedGem(1_000e18, "ipfs://rejecting-holder");
+        vm.prank(address(holder));
+        uint256 tokenId = sale.buyNow{value: 0.52 ether}(gemId, address(0), 0.52 ether);
+
+        holder.openRedemption(redemption, tokenId, keccak256("rejecting-holder"));
+        uint256 custodianBefore = custodian.balance;
+        vm.prank(custodian);
+        redemption.confirmRedemption(tokenId);
+
+        vm.expectRevert();
+        nft.ownerOf(tokenId);
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        assertEq(uint256(gem.status), uint256(GemRegistry.GemStatus.Redeemed));
+        assertEq(custodian.balance, custodianBefore);
+        assertEq(reserveManager.pendingReserveClaims(address(holder), address(0)), 0.02 ether);
+
+        uint256 recipientBefore = payoutRecipient.balance;
+        holder.claim(reserveManager, address(0), payoutRecipient);
+        assertEq(payoutRecipient.balance - recipientBefore, 0.02 ether);
+        assertEq(reserveManager.pendingReserveClaims(address(holder), address(0)), 0);
     }
 
     function testMintSyncsProjectedLiabilityAndRedemptionClearsIt() public {
@@ -269,5 +309,47 @@ contract PaymentReserveLogicTest is BaseTest {
         assertEq(payments.paymentTokenCount(), 3);
         assertEq(payments.paymentTokenAt(0), address(0));
         assertEq(payments.paymentTokenAt(1), address(usdc));
+    }
+
+    function testReserveManagerUpgradePreservesExistingAccountingAndConfiguration() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://reserve-upgrade-storage");
+        reserveManager.setMinimumReserveUsd(gemId, 25e18);
+        reserveManager.setProjectedLiabilityUsd(gemId, 40e18);
+        reserveManager.recordModuleFunding{value: 0.02 ether}(gemId, address(0), 0.02 ether, 40e18);
+
+        address paymentRegistryBefore = address(reserveManager.paymentRegistry());
+        address registryBefore = address(reserveManager.registry());
+        uint256 assetBalanceBefore = reserveManager.reserveAssetBalance(gemId, address(0));
+        uint256 liabilityBefore = reserveManager.projectedLiabilityUsd(gemId);
+
+        reserveManager.upgradeToAndCall(address(new ReserveManager()), bytes(""));
+
+        assertEq(address(reserveManager.paymentRegistry()), paymentRegistryBefore);
+        assertEq(address(reserveManager.registry()), registryBefore);
+        assertEq(reserveManager.minimumReserveUsd(gemId), 25e18);
+        assertEq(reserveManager.reserveAssetBalance(gemId, address(0)), assetBalanceBefore);
+        assertEq(reserveManager.projectedLiabilityUsd(gemId), liabilityBefore);
+        assertEq(reserveManager.pendingReserveClaims(buyer, address(0)), 0);
+        assertEq(reserveManager.totalPendingReserveClaims(address(0)), 0);
+    }
+}
+
+contract RejectingReserveHolder is IERC721Receiver {
+    error RejectNative();
+
+    receive() external payable {
+        revert RejectNative();
+    }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    function openRedemption(RedemptionManager redemption, uint256 tokenId, bytes32 requestHash) external {
+        redemption.requestRedemption(tokenId, requestHash);
+    }
+
+    function claim(ReserveManager reserveManager, address asset, address recipient) external {
+        reserveManager.claimReserveCredit(asset, recipient);
     }
 }

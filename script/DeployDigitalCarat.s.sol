@@ -41,6 +41,8 @@ contract DeployDigitalCarat is Script {
         address vaultReserveRecipient = vm.envOr("VAULT_RESERVE_RECIPIENT", admin);
         address insuranceReserveRecipient = vm.envOr("INSURANCE_RESERVE_RECIPIENT", admin);
         address treasuryReserveRecipient = vm.envOr("TREASURY_RESERVE_RECIPIENT", admin);
+        address giftOperator = vm.envAddress("GIFT_OPERATOR_ADDRESS");
+        require(giftOperator != address(0), "GIFT_OPERATOR_ADDRESS missing");
         if (productionDeployment) {
             require(block.chainid != 11155111, "Production cannot target Sepolia");
             require(
@@ -160,6 +162,8 @@ contract DeployDigitalCarat is Script {
                 ))
         );
 
+        _initializeNftReserveGuard(deployment, giftOperator);
+
         _configurePayments(deployment.payments, productionDeployment);
         _configureReservePolicy(deployment.reserveManager);
         deployment.marketplace.setSecondaryFeeRecipient(platformRecipient);
@@ -201,6 +205,15 @@ contract DeployDigitalCarat is Script {
         console2.log("RedemptionManager", address(deployment.redemption));
         console2.log("Marketplace", address(deployment.marketplace));
         console2.log("SwapEscrow", address(deployment.swapEscrow));
+    }
+
+    function _initializeNftReserveGuard(Deployment memory deployment, address giftOperator) private {
+        address[] memory trustedEscrows = new address[](3);
+        trustedEscrows[0] = address(deployment.marketplace);
+        trustedEscrows[1] = address(deployment.swapEscrow);
+        trustedEscrows[2] = giftOperator;
+        deployment.nft
+            .initializeReserveGuard(deployment.reserveManager, trustedEscrows, new uint256[](0), new address[](0));
     }
 
     function _configurePayments(PaymentTokenRegistry payments, bool productionDeployment) private {

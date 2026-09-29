@@ -91,29 +91,33 @@ contract RedemptionManager is
     }
 
     /// @notice Cancels an open redemption request and unlocks transfers.
-    /// @dev Callable by the token owner or an account with `REDEEMER_ROLE`.
+    /// @dev Callable by the token owner, the gem's recorded custodian, or `REDEEMER_ROLE`.
     /// @param tokenId Token whose redemption should be cancelled.
     function cancelRedemption(uint256 tokenId) external nonReentrant whenNotPaused {
         uint256 gemId = nft.tokenGem(tokenId);
         if (gemId == 0) revert TokenNotMapped();
         address owner = nft.ownerOf(tokenId);
-        if (msg.sender != owner && !hasRole(Roles.REDEEMER_ROLE, msg.sender)) revert NotRedemptionCanceller();
+        address recordedCustodian = registry.getGem(gemId).custodian;
+        if (msg.sender != owner && msg.sender != recordedCustodian && !hasRole(Roles.REDEEMER_ROLE, msg.sender)) {
+            revert NotRedemptionCanceller();
+        }
         registry.cancelRedemption(gemId);
         nft.setTransferLocked(tokenId, false);
         emit RedemptionCancelled(tokenId, gemId);
     }
 
-    /// @notice Confirms physical redemption, releases reserve assets, and burns the NFT.
+    /// @notice Confirms physical redemption, credits reserve assets to the holder, and burns the NFT.
     /// @dev Caller must be the gem's recorded custodian.
     /// @param tokenId Token being redeemed.
     function confirmRedemption(uint256 tokenId) external nonReentrant whenNotPaused {
         uint256 gemId = nft.tokenGem(tokenId);
         if (gemId == 0) revert TokenNotMapped();
+        address holder = nft.ownerOf(tokenId);
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         if (msg.sender != gem.custodian) revert NotGemCustodian();
         registry.markRedeemed(gemId);
         reserveManager.clearProjectedLiabilityUsd(gemId);
-        reserveManager.releaseAllReserveAssets(gemId, msg.sender, keccak256("REDEMPTION_CONFIRMED"));
+        reserveManager.creditAllReserveAssets(gemId, holder, keccak256("REDEMPTION_CONFIRMED"));
         nft.burnFromProtocol(tokenId);
         emit RedemptionConfirmed(tokenId, gemId);
     }

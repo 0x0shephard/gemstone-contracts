@@ -212,7 +212,7 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         assertEq(nft.ownerOf(tokenId), bidder);
         assertEq(usdc.balanceOf(buyer) - sellerBefore, 980e6);
         assertEq(usdc.balanceOf(platform), 20e6);
-        assertEq(reserveManager.reserveBalanceUsd(gemId), 100e18);
+        assertGe(reserveManager.reserveBalanceUsd(gemId), 100e18);
         assertEq(reserveManager.reserveAssetBalance(gemId, address(usdc)), 100e6);
     }
 

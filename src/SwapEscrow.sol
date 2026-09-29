@@ -27,7 +27,6 @@ contract SwapEscrow is
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant MIN_SWAP_RESERVE_BPS = 1_000;
 
     struct SwapOffer {
         address proposer;
@@ -68,6 +67,7 @@ contract SwapEscrow is
     error InvalidAmount();
     error TransferFailed();
     error GemNotMinted();
+    error SelfSwap();
     error ReserveCoverageTooLow(uint256 gemId, uint256 requiredUsd, uint256 balanceUsd);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -126,6 +126,7 @@ contract SwapEscrow is
         uint64 expiry
     ) external payable nonReentrant whenNotPaused returns (uint256 offerId) {
         if (expiry <= block.timestamp || offeredTokenId == requestedTokenId) revert InvalidOffer();
+        if (nft.ownerOf(requestedTokenId) == msg.sender) revert SelfSwap();
         if (cashAmount != 0) {
             paymentRegistry.quoteTokenToUsd(cashAsset, cashAmount);
         }
@@ -198,6 +199,7 @@ contract SwapEscrow is
         SwapOffer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
         if (block.timestamp > offer.expiry) revert Expired();
+        if (msg.sender == offer.proposer) revert SelfSwap();
         if (offer.proposerPaysCash && msg.value != 0) revert InvalidAmount();
         delete offers[offerId];
         uint256 offeredGemId = nft.tokenGem(offer.offeredTokenId);
@@ -268,16 +270,14 @@ contract SwapEscrow is
         if (gem.status != GemRegistry.GemStatus.Minted) revert GemNotMinted();
     }
 
-    /// @dev A swap changes ownership but does not consume reserve. Partial
-    ///      coverage is therefore allowed, while ten percent or less is not.
+    /// @dev A swap changes ownership but does not consume reserve. Any positive
+    ///      reserve balance therefore qualifies; only an empty reserve blocks it,
+    ///      matching the zero-reserve transfer rule enforced by `DGENFT`.
     function _requireSwapReserve(uint256 gemId, uint256 referenceValueUsd) private view {
         uint256 requiredUsd = reserveManager.requiredReserveUsd(gemId, referenceValueUsd);
         if (requiredUsd == 0) return;
         uint256 balanceUsd = reserveManager.reserveBalanceUsd(gemId);
-        uint256 coverageBps = Math.mulDiv(balanceUsd, BPS_DENOMINATOR, requiredUsd);
-        if (coverageBps <= MIN_SWAP_RESERVE_BPS) {
-            revert ReserveCoverageTooLow(gemId, requiredUsd, balanceUsd);
-        }
+        if (balanceUsd == 0) revert ReserveCoverageTooLow(gemId, requiredUsd, balanceUsd);
     }
 
     receive() external payable {}

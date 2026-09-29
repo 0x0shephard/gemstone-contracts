@@ -11,12 +11,21 @@ contract SwapEscrowLogicTest is BaseTest {
         reserveManager.fundNative{value: nativeAmount}(gemId);
     }
 
-    function testSwapAllowsPartialReserveAboveTenPercent() public {
+    function _drainSwapReserve(uint256 gemId, address recipient) private {
+        reserveManager.releaseAllReserveAssets(gemId, recipient, keccak256("TEST_DEPLETION"));
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 0);
+    }
+
+    function testSwapAllowsAnyPositiveReserve() public {
         (uint256 firstGemId, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-partial-a");
         (uint256 secondGemId, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-partial-b");
-        // Native oracle is $2,000: 0.055 ETH is $110, or 11% of $1,000.
-        _fundSwapReserve(firstGemId, buyer, 0.055 ether);
-        _fundSwapReserve(secondGemId, bidder, 0.055 ether);
+        // The old rule blocked anything at or below 10%. Both sides now hold far
+        // less than 1% of the requirement and must still swap.
+        _drainSwapReserve(firstGemId, buyer);
+        _drainSwapReserve(secondGemId, bidder);
+        _fundSwapReserve(firstGemId, buyer, 0.0005 ether);
+        _fundSwapReserve(secondGemId, bidder, 1);
+        assertGt(reserveManager.reserveBalanceUsd(secondGemId), 0);
 
         vm.startPrank(buyer);
         nft.approve(address(swapEscrow), firstTokenId);
@@ -33,21 +42,20 @@ contract SwapEscrowLogicTest is BaseTest {
         assertEq(nft.ownerOf(secondTokenId), buyer);
     }
 
-    function testSwapBlocksReserveAtTenPercent() public {
+    function testSwapBlocksEmptyReserve() public {
         (uint256 firstGemId, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-threshold-a");
-        (uint256 secondGemId, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-threshold-b");
-        // 0.05 ETH is exactly $100, or 10% of the configured requirement.
-        _fundSwapReserve(firstGemId, buyer, 0.05 ether);
-        _fundSwapReserve(secondGemId, bidder, 0.055 ether);
+        (, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-threshold-b");
+        reserveManager.setMinimumReserveUsd(firstGemId, 1_000e18);
+        _drainSwapReserve(firstGemId, buyer);
 
         vm.startPrank(buyer);
         nft.approve(address(swapEscrow), firstTokenId);
-        vm.expectRevert(abi.encodeWithSelector(SwapEscrow.ReserveCoverageTooLow.selector, firstGemId, 1_000e18, 100e18));
+        vm.expectRevert(abi.encodeWithSelector(SwapEscrow.ReserveCoverageTooLow.selector, firstGemId, 1_000e18, 0));
         swapEscrow.createOffer(firstTokenId, secondTokenId, address(0), 0, false, uint64(block.timestamp + 1 days));
         vm.stopPrank();
     }
 
-    function testSwapRechecksTenPercentBoundaryOnAcceptance() public {
+    function testSwapRechecksEmptyReserveOnAcceptance() public {
         (, uint256 firstTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://swap-accept-threshold-a");
         (uint256 secondGemId, uint256 secondTokenId) = _mintGemTo(bidder, 1_000e18, "ipfs://swap-accept-threshold-b");
 
@@ -57,13 +65,12 @@ contract SwapEscrowLogicTest is BaseTest {
             swapEscrow.createOffer(firstTokenId, secondTokenId, address(0), 0, false, uint64(block.timestamp + 1 days));
         vm.stopPrank();
 
-        // Coverage can move while an offer is open, so acceptance checks again.
-        _fundSwapReserve(secondGemId, bidder, 0.05 ether);
+        // Reserve can empty while an offer is open, so acceptance checks again.
+        reserveManager.setMinimumReserveUsd(secondGemId, 1_000e18);
+        _drainSwapReserve(secondGemId, bidder);
         vm.startPrank(bidder);
         nft.approve(address(swapEscrow), secondTokenId);
-        vm.expectRevert(
-            abi.encodeWithSelector(SwapEscrow.ReserveCoverageTooLow.selector, secondGemId, 1_000e18, 100e18)
-        );
+        vm.expectRevert(abi.encodeWithSelector(SwapEscrow.ReserveCoverageTooLow.selector, secondGemId, 1_000e18, 0));
         swapEscrow.acceptOffer(offerId);
         vm.stopPrank();
     }

@@ -100,6 +100,26 @@ contract RegistryRedemptionLogicTest is BaseTest {
         assertEq(gem.redemptionRequestHash, bytes32(0));
     }
 
+    function testRecordedCustodianAndRedeemerCanCancelButStrangerCannot() public {
+        (, uint256 custodianTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://custodian-cancel");
+        vm.prank(buyer);
+        redemption.requestRedemption(custodianTokenId, keccak256("custodian-cancel"));
+
+        vm.prank(stranger);
+        vm.expectRevert(RedemptionManager.NotRedemptionCanceller.selector);
+        redemption.cancelRedemption(custodianTokenId);
+
+        vm.prank(custodian);
+        redemption.cancelRedemption(custodianTokenId);
+        assertFalse(nft.transferLocked(custodianTokenId));
+
+        (, uint256 redeemerTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://redeemer-cancel");
+        vm.prank(buyer);
+        redemption.requestRedemption(redeemerTokenId, keccak256("redeemer-cancel"));
+        redemption.cancelRedemption(redeemerTokenId);
+        assertFalse(nft.transferLocked(redeemerTokenId));
+    }
+
     function testRedemptionRejectsNonOwnerAndWrongCustodian() public {
         (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://redeem-auth");
 
