@@ -42,6 +42,8 @@ contract DeployLocalE2E is Script {
         uint256 listedGem;
         uint256 aliceTokenOne;
         uint256 aliceTokenTwo;
+        uint256 aliceGiftToken;
+        uint256 aliceKeptToken;
         uint256 bobToken;
     }
 
@@ -105,11 +107,13 @@ contract DeployLocalE2E is Script {
         vm.startBroadcast(a.adminKey);
         d.registry.grantRole(Roles.CUSTODIAN_ROLE, a.custodian);
         d.registry.setSellerApproval(a.seller, true);
-        uint256[4] memory gems = [
+        uint256[6] memory gems = [
             _register(d.registry, a, "Listed Ruby"),
             _register(d.registry, a, "Alice Sapphire"),
             _register(d.registry, a, "Alice Emerald"),
-            _register(d.registry, a, "Bob Spinel")
+            _register(d.registry, a, "Bob Spinel"),
+            _register(d.registry, a, "Alice Opal"),
+            _register(d.registry, a, "Alice Topaz")
         ];
         vm.stopBroadcast();
 
@@ -131,6 +135,9 @@ contract DeployLocalE2E is Script {
         vm.startBroadcast(a.aliceKey);
         seeded.aliceTokenOne = d.sale.buyNow{value: 0.55 ether}(gems[1], address(0), 0.55 ether);
         seeded.aliceTokenTwo = d.sale.buyNow{value: 0.55 ether}(gems[2], address(0), 0.55 ether);
+        seeded.aliceGiftToken = d.sale.buyNow{value: 0.55 ether}(gems[4], address(0), 0.55 ether);
+        // Never moved by any journey, so "your own tokens are not offered" stays testable.
+        seeded.aliceKeptToken = d.sale.buyNow{value: 0.55 ether}(gems[5], address(0), 0.55 ether);
         vm.stopBroadcast();
         vm.startBroadcast(a.bobKey);
         seeded.bobToken = d.sale.buyNow{value: 0.55 ether}(gems[3], address(0), 0.55 ether);
@@ -156,6 +163,8 @@ contract DeployLocalE2E is Script {
         vm.serializeUint(key, "listedGem", seeded.listedGem);
         vm.serializeUint(key, "aliceTokenOne", seeded.aliceTokenOne);
         vm.serializeUint(key, "aliceTokenTwo", seeded.aliceTokenTwo);
+        vm.serializeUint(key, "aliceGiftToken", seeded.aliceGiftToken);
+        vm.serializeUint(key, "aliceKeptToken", seeded.aliceKeptToken);
         string memory json = vm.serializeUint(key, "bobToken", seeded.bobToken);
         console2.log("E2E_DEPLOYMENT", json);
     }
