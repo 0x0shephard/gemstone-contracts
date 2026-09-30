@@ -20,7 +20,7 @@
   "implementations": {
     "PaymentTokenRegistry": "0x563e83ef30A9a91174613B9a9eeD3383f468D2C7",
     "ReserveManager": "0x840e835D2Ae067F1928dbF76056fdD51f7f96541",
-    "RedemptionManager": "0x6A2D96BbEc87980B09D3f198a3515EEF88a2e0FC",
+    "RedemptionManager": "0x415aF658172b12AA610619896D06F285d2782114",
     "SwapEscrow": "0x5eeDA8b5ec891bB715D8686E3475Dd381f18f8Fe",
     "DGENFT": "0xcD1aff39F3e5e67E8F9082a8545AbFe3eA9dBd87"
   },
