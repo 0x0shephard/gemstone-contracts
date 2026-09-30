@@ -203,4 +203,33 @@ contract RegistryRedemptionLogicTest is BaseTest {
         vm.expectRevert(ReserveManager.InvalidReserveBps.selector);
         reserveManager.setDefaultReserveBps(10_001);
     }
+
+    function testRedemptionNeedsTwentyPercentOfTheRequiredReserve() public {
+        (uint256 gemId, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://redeem-twenty");
+        reserveManager.setMinimumReserveUsd(gemId, 1_000e18);
+        uint256 requiredUsd = reserveManager.requiredReserveUsd(gemId, 1_000e18);
+        uint256 twentyPercent = requiredUsd * 2_000 / 10_000;
+
+        // Top up to one dollar short of 20% (ETH is $2,000 in the test oracle).
+        uint256 balanceUsd = reserveManager.reserveBalanceUsd(gemId);
+        vm.prank(buyer);
+        reserveManager.fundNative{value: (twentyPercent - balanceUsd - 1e18) / 2_000}(gemId);
+        balanceUsd = reserveManager.reserveBalanceUsd(gemId);
+        assertLt(balanceUsd, twentyPercent);
+
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(RedemptionManager.RedemptionReserveTooLow.selector, requiredUsd, balanceUsd)
+        );
+        redemption.requestRedemption(tokenId, keccak256("below-twenty"));
+
+        // A partial reserve at 20% is enough; full funding is no longer required.
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 2e18 / 2_000}(gemId);
+        assertGe(reserveManager.reserveBalanceUsd(gemId), twentyPercent);
+        assertLt(reserveManager.reserveBalanceUsd(gemId), requiredUsd);
+        vm.prank(buyer);
+        redemption.requestRedemption(tokenId, keccak256("at-twenty"));
+        assertTrue(nft.transferLocked(tokenId));
+    }
 }

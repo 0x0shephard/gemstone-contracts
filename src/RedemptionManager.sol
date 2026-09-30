@@ -34,6 +34,11 @@ contract RedemptionManager is
     error TokenNotMapped();
     error RedemptionNotAllowed();
     error NotRedemptionCanceller();
+    error RedemptionReserveTooLow(uint256 requiredUsd, uint256 balanceUsd);
+
+    /// @notice Share of a gem's required reserve that must be funded to open a
+    ///         redemption, in basis points (2,000 = 20%).
+    uint256 public constant MIN_REDEMPTION_RESERVE_BPS = 2_000;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -74,7 +79,8 @@ contract RedemptionManager is
     }
 
     /// @notice Opens redemption for a token owned by the caller.
-    /// @dev Requires compliance approval, protocol solvency, and fully funded gem reserve.
+    /// @dev Requires compliance approval, protocol solvency, and at least
+    ///      `MIN_REDEMPTION_RESERVE_BPS` of the gem's required reserve funded.
     /// @param tokenId NFT token id to redeem.
     /// @param requestHash Off-chain redemption request hash.
     function requestRedemption(uint256 tokenId, bytes32 requestHash) external nonReentrant whenNotPaused {
@@ -84,7 +90,11 @@ contract RedemptionManager is
         if (gemId == 0) revert TokenNotMapped();
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         reserveManager.requireSolvent();
-        reserveManager.requireFunded(gemId, gem.priceUsd);
+        uint256 requiredUsd = reserveManager.requiredReserveUsd(gemId, gem.priceUsd);
+        uint256 balanceUsd = reserveManager.reserveBalanceUsd(gemId);
+        if (balanceUsd * 10_000 < requiredUsd * MIN_REDEMPTION_RESERVE_BPS) {
+            revert RedemptionReserveTooLow(requiredUsd, balanceUsd);
+        }
         nft.setTransferLocked(tokenId, true);
         registry.requestRedemption(gemId, requestHash);
         emit RedemptionOpened(tokenId, gemId, msg.sender, requestHash);
