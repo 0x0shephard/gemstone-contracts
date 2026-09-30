@@ -47,6 +47,8 @@ contract DeployLocalE2E is Script {
         uint256 aliceFaultToken;
         uint256 aliceResumeToken;
         uint256 aliceRedeemToken;
+        uint256 aliceOfferToken;
+        uint256 aliceCancelToken;
         uint256 bobToken;
     }
 
@@ -111,7 +113,7 @@ contract DeployLocalE2E is Script {
         d.registry.grantRole(Roles.CUSTODIAN_ROLE, a.custodian);
         d.registry.setSellerApproval(a.seller, true);
         d.compliance.setRedemptionApproved(a.alice, true);
-        uint256[9] memory gems = [
+        uint256[11] memory gems = [
             _register(d.registry, a, "Listed Ruby"),
             _register(d.registry, a, "Alice Sapphire"),
             _register(d.registry, a, "Alice Emerald"),
@@ -120,7 +122,9 @@ contract DeployLocalE2E is Script {
             _register(d.registry, a, "Alice Topaz"),
             _register(d.registry, a, "Alice Garnet"),
             _register(d.registry, a, "Alice Pearl"),
-            _register(d.registry, a, "Alice Amber")
+            _register(d.registry, a, "Alice Amber"),
+            _register(d.registry, a, "Alice Onyx"),
+            _register(d.registry, a, "Alice Jade")
         ];
         vm.stopBroadcast();
 
@@ -154,6 +158,8 @@ contract DeployLocalE2E is Script {
         seeded.aliceFaultToken = d.sale.buyNow{value: 0.55 ether}(gems[6], address(0), 0.55 ether);
         seeded.aliceResumeToken = d.sale.buyNow{value: 0.55 ether}(gems[7], address(0), 0.55 ether);
         seeded.aliceRedeemToken = d.sale.buyNow{value: 0.55 ether}(gems[8], address(0), 0.55 ether);
+        seeded.aliceOfferToken = d.sale.buyNow{value: 0.55 ether}(gems[9], address(0), 0.55 ether);
+        seeded.aliceCancelToken = d.sale.buyNow{value: 0.55 ether}(gems[10], address(0), 0.55 ether);
         vm.stopBroadcast();
         vm.startBroadcast(a.bobKey);
         seeded.bobToken = d.sale.buyNow{value: 0.55 ether}(gems[3], address(0), 0.55 ether);
@@ -184,6 +190,8 @@ contract DeployLocalE2E is Script {
         vm.serializeUint(key, "aliceFaultToken", seeded.aliceFaultToken);
         vm.serializeUint(key, "aliceResumeToken", seeded.aliceResumeToken);
         vm.serializeUint(key, "aliceRedeemToken", seeded.aliceRedeemToken);
+        vm.serializeUint(key, "aliceOfferToken", seeded.aliceOfferToken);
+        vm.serializeUint(key, "aliceCancelToken", seeded.aliceCancelToken);
         string memory json = vm.serializeUint(key, "bobToken", seeded.bobToken);
         console2.log("E2E_DEPLOYMENT", json);
     }
