@@ -133,8 +133,14 @@ contract DeployLocalE2E is Script {
         vm.startBroadcast(a.adminKey);
         for (uint256 i = 0; i < gems.length; i++) {
             d.registry.verifyGem(gems[i], keccak256(abi.encode("e2e", gems[i])), keccak256("e2e-matrix"), 1_000e18);
-            d.registry.listGem(gems[i], 1_000e18, GemRegistry.PrimarySaleMode.BuyNow);
+            // The first gem is listed the way seller activation lists every new
+            // gem: a 24-hour primary auction. The rest are bought now to seed holders.
+            d.registry
+                .listGem(
+                    gems[i], 1_000e18, i == 0 ? GemRegistry.PrimarySaleMode.Auction : GemRegistry.PrimarySaleMode.BuyNow
+                );
         }
+        d.sale.createDailyAuction(gems[0], 1_000e18);
         vm.stopBroadcast();
 
         // $1,000 at $2,000/ETH plus its 10% reserve.
