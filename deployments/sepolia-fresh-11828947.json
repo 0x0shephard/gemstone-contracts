@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-fresh-11828947",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "deploymentBlock": 11828947,
+  "lastDeploymentBlock": 11829005,
+  "deployedAt": "2026-10-02T12:20:00Z",
+  "completedAt": "2026-10-02T12:31:48Z",
+  "source": {
+    "commit": "b82174cd5a9cb2f7d2b61084af3e18ae8b6591e3",
+    "script": "script/DeployDigitalCarat.s.sol:DeployDigitalCarat",
+    "broadcast": "broadcast/DeployDigitalCarat.s.sol/11155111/run-1790944310871.json"
+  },
+  "admin": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+  "giftOperator": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+  "addresses": {
+    "DGENFT": "0x591bB1da8b80C773211301f7fa6f639617182a0d",
+    "GemRegistry": "0x2C4F20f1288Ed0a313C84acb7580da8C53420233",
+    "PaymentTokenRegistry": "0x6a6cCA11D5a9059826bB252ea6418305f95f5efE",
+    "ReserveManager": "0x4dfC6f9274BAF037027166bB234543fdD8019f1E",
+    "ComplianceRegistry": "0xC34cd372D29cf4E188D0CC59e463433d298b94E2",
+    "Treasury": "0xBe2C7c1A2C65c82d6bb8B76a65634875431daf6a",
+    "PrimarySaleAuction": "0x7C6a7deCDB433B3B47A4BB73C59E0Cd089e6F1A3",
+    "RedemptionManager": "0xD3343fC37621c610C0a601594586656B3199006E",
+    "Marketplace": "0x4410987B2679bF46AcF75f69372177E882582694",
+    "SwapEscrow": "0x8eba95fc2f3eEB4854f8CA751A11dF5FE645F7af"
+  },
+  "implementations": {
+    "DGENFT": "0x4894bfB9304B447e8f79d1e6F9BAb68b9C5AAb9f",
+    "GemRegistry": "0x6C981a4c6f81285E6A931c1123AacB131C62De64",
+    "PaymentTokenRegistry": "0x1939b78A93aAF2379C5D872d39ce844E5c459F08",
+    "ReserveManager": "0x5DB0ae3c70655eD3B9553255CD1ff9BC6eB0A85e",
+    "ComplianceRegistry": "0x9b31a1aCa8f1dF639D617C862956Cdc1c5DF2EE9",
+    "Treasury": "0xB6C9D5FDf4A3B43aaab8A18C3Ebe1Cdf0393B637",
+    "PrimarySaleAuction": "0xd42b6190ef209BD08e31B00796ceA4D185c159AB",
+    "RedemptionManager": "0xFE28A96C0064F157f67C8769217A54F8A9c3a300",
+    "Marketplace": "0xE6d85115Fe37957500Fb199e6F46Bb5C7b8E5c91",
+    "SwapEscrow": "0x0b9662d757B5BC70cDB64E80c46b47981E17ECA0"
+  },
+  "paymentAssets": {
+    "nativeEth": "0x0000000000000000000000000000000000000000",
+    "mockUsdc": "0x29f4b1eF7261A372DB73493004CCf6A28175Dc54",
+    "usdcUsdFeed": "0xA2F78ab2355fe2f984D808B5CeE7FD0A93D5270E",
+    "mockUsdcFaucet": "0x387898839e6EB38886D5C0E9c6a94f6f75C1E9C8",
+    "ethUsdFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306"
+  },
+  "configuration": {
+    "priceStaleAfterSeconds": 129600,
+    "ethUsdMinAnswer": 50000000000,
+    "ethUsdMaxAnswer": 1000000000000,
+    "mockUsdcMinAnswer": 80000000,
+    "mockUsdcMaxAnswer": 120000000,
+    "defaultReserveBps": 1000,
+    "reserveBrackets": [
+      {
+        "minPriceUsd": "0",
+        "maxPriceUsd": "1000000000000000000000",
+        "reserveBps": 1500
+      },
+      {
+        "minPriceUsd": "1000000000000000000000",
+        "maxPriceUsd": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "reserveBps": 1000
+      }
+    ],
+    "secondaryFeeBps": 200
+  },
+  "proxyDeploymentTransactions": {
+    "DGENFT": "0x724cb0a34a27a772db5e27ca157f9c19577f2b20027e3afeaa3adb46bef1293e",
+    "GemRegistry": "0x9c0f4f38eea8b794586a3056c71e3dd389a72969291cbf8bdd7541017354ecf4",
+    "PaymentTokenRegistry": "0x0a11c6efcd5a996005c0a3a9bc26b1b5dc11e45f33e1671f5812444a26d7241c",
+    "ReserveManager": "0x59645392f46282304597ca1669eeccb823486ab5d86ac227e75293be8c37e67d",
+    "ComplianceRegistry": "0x43104ccc70e45e77b7ddcab66acb7e0d10257ffa8166ae45d0d55d37bfbb2e83",
+    "Treasury": "0x98689d485cd3b2f4b541b56c811ae067d63801f84d67a0e5e7394df460a2d7d6",
+    "PrimarySaleAuction": "0x17e051ae73f61a260c4cb323d5383422f059cc0dd423555dce217c136e944ce7",
+    "RedemptionManager": "0xcb11805f717da96fbd77817f9bb3abfd1a9c2c7516924f7e6023685a608b0359",
+    "Marketplace": "0x6be12ab88469bc75f755d7ade5981d5a2157c3bc532b20680da24ab7fe5d297b",
+    "SwapEscrow": "0x1a667ec46fb8f679567c7fa90a4177f1a873d68806b3ba8f6de0891e6b8b1dd9"
+  },
+  "verification": {
+    "receiptCount": 43,
+    "allReceiptsSuccessful": true,
+    "proxyImplementationsVerified": true,
+    "dependencyWiringVerified": true,
+    "rolesVerified": true,
+    "emptyGemAndTokenStateVerified": true,
+    "emptyMarketplaceAndReserveStateVerified": true,
+    "oldDeploymentUntouched": true,
+    "firstBlockHash": "0xc8c80f44d98a051f3b77363710910f27be7f5550bacb7435aaa3df188fbd18ea",
+    "lastBlockHash": "0x1444aaee974fab6adc1246f3413d3e54b56bfeb00375fc4c120ab9eb5faf867f"
+  }
+}
