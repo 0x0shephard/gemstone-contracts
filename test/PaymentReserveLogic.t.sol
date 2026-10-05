@@ -199,10 +199,8 @@ contract PaymentReserveLogicTest is BaseTest {
 
         uint256 holderBefore = buyer.balance;
         uint256 custodianBefore = custodian.balance;
-        vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("release-reserve"));
-        vm.prank(custodian);
-        redemption.confirmRedemption(tokenId);
+        _prepareApprovedRedemption(tokenId, keccak256("release-reserve"));
+        _finalizeAsOwner(tokenId, buyer, keccak256("release-reserve-nonce"));
 
         assertEq(buyer.balance, holderBefore);
         assertEq(custodian.balance, custodianBefore);
@@ -230,9 +228,22 @@ contract PaymentReserveLogicTest is BaseTest {
         uint256 tokenId = sale.buyNow{value: 0.52 ether}(gemId, address(0), 0.52 ether);
 
         holder.openRedemption(redemption, tokenId, keccak256("rejecting-holder"));
-        uint256 custodianBefore = custodian.balance;
         vm.prank(custodian);
-        redemption.confirmRedemption(tokenId);
+        redemption.startFulfillment(tokenId);
+        vm.prank(custodian);
+        redemption.submitFulfillmentProof(tokenId, keccak256("rejecting-holder-proof"));
+        redemption.approveFulfillmentProof(tokenId, keccak256("rejecting-holder-approval"), 1);
+        uint256 custodianBefore = custodian.balance;
+        {
+            bytes32 nonce = keccak256("rejecting-holder-nonce");
+            uint64 issuedAt = uint64(block.timestamp);
+            uint64 deadline = issuedAt + 10 minutes;
+            bytes32 digest = redemption.redemptionAuthorizationDigest(tokenId, nonce, issuedAt, deadline);
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(AUTHORIZER_KEY, digest);
+            holder.finalize(
+                redemption, tokenId, nonce, issuedAt, deadline, authorizationSigner, abi.encodePacked(r, s, v)
+            );
+        }
 
         vm.expectRevert();
         nft.ownerOf(tokenId);
@@ -257,10 +268,8 @@ contract PaymentReserveLogicTest is BaseTest {
         assertEq(reserveManager.projectedLiabilityUsd(gemId), 40e18);
         assertEq(reserveManager.totalProjectedLiabilitiesUsd(), 40e18);
 
-        vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("liability-clear"));
-        vm.prank(custodian);
-        redemption.confirmRedemption(tokenId);
+        _prepareApprovedRedemption(tokenId, keccak256("liability-clear"));
+        _finalizeAsOwner(tokenId, buyer, keccak256("liability-clear-nonce"));
 
         assertEq(reserveManager.projectedLiabilityUsd(gemId), 0);
         assertEq(reserveManager.totalProjectedLiabilitiesUsd(), 0);
@@ -346,10 +355,22 @@ contract RejectingReserveHolder is IERC721Receiver {
     }
 
     function openRedemption(RedemptionManager redemption, uint256 tokenId, bytes32 requestHash) external {
-        redemption.requestRedemption(tokenId, requestHash);
+        redemption.requestRedemption(tokenId, requestHash, keccak256(abi.encode("holder-workflow", tokenId)));
     }
 
     function claim(ReserveManager reserveManager, address asset, address recipient) external {
         reserveManager.claimReserveCredit(asset, recipient);
+    }
+
+    function finalize(
+        RedemptionManager redemption,
+        uint256 tokenId,
+        bytes32 nonce,
+        uint64 issuedAt,
+        uint64 deadline,
+        address authorizer,
+        bytes calldata signature
+    ) external {
+        redemption.finalizeRedemption(tokenId, nonce, issuedAt, deadline, authorizer, signature);
     }
 }

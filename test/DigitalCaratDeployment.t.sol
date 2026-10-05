@@ -78,6 +78,7 @@ contract DigitalCaratDeploymentTest is BaseTest {
                 )
             )
         );
+        _initializeRedemptionV2(redemption);
         Marketplace marketplace = Marketplace(
             payable(address(
                     new ERC1967Proxy(

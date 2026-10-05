@@ -23,7 +23,7 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         assertEq(nft.ownerOf(tokenId), bidder);
 
         vm.prank(bidder);
-        redemption.requestRedemption(tokenId, keccak256("redeem"));
+        redemption.requestRedemption(tokenId, keccak256("redeem"), keccak256("redeem-workflow"));
 
         vm.prank(bidder);
         vm.expectRevert(DGENFT.TokenLocked.selector);

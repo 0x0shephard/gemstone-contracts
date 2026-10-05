@@ -46,8 +46,13 @@ abstract contract BaseTest is Test {
     address internal feeCollector = address(0x800);
     address internal stranger = address(0x900);
     address internal giftOperator = address(0xA00);
+    uint256 internal constant AUTHORIZER_KEY = 0xA11CE;
+    address internal authorizationSigner;
+    address internal recoveryApproverOne = address(0xB01);
+    address internal recoveryApproverTwo = address(0xB02);
 
     function setUp() public virtual {
+        authorizationSigner = vm.addr(AUTHORIZER_KEY);
         _deployProtocol();
         _configureDefaultRoles();
         _configureDefaultPayments();
@@ -115,6 +120,7 @@ abstract contract BaseTest is Test {
                 )
             )
         );
+        _initializeRedemptionV2(redemption);
         marketplace = Marketplace(
             payable(address(
                     new ERC1967Proxy(
@@ -225,5 +231,34 @@ abstract contract BaseTest is Test {
         brackets[1] =
             ReserveManager.ReserveBracket({minPriceUsd: 1_000e18, maxPriceUsd: type(uint256).max, reserveBps: 400});
         reserveManager.setReserveBrackets(brackets);
+    }
+
+    function _initializeRedemptionV2(RedemptionManager target) internal {
+        address[] memory recoveryApprovers = new address[](2);
+        recoveryApprovers[0] = recoveryApproverOne;
+        recoveryApprovers[1] = recoveryApproverTwo;
+        target.initializeV2(admin, authorizationSigner, recoveryApprovers, 2, 7 days);
+    }
+
+    function _prepareApprovedRedemption(uint256 tokenId, bytes32 requestHash) internal {
+        address owner = nft.ownerOf(tokenId);
+        vm.prank(owner);
+        redemption.requestRedemption(tokenId, requestHash, keccak256(abi.encode("workflow", tokenId, requestHash)));
+        vm.prank(custodian);
+        redemption.startFulfillment(tokenId);
+        vm.prank(custodian);
+        redemption.submitFulfillmentProof(tokenId, keccak256(abi.encode("proof", tokenId)));
+        redemption.approveFulfillmentProof(tokenId, keccak256(abi.encode("approval", tokenId)), 1);
+    }
+
+    function _finalizeAsOwner(uint256 tokenId, address owner, bytes32 nonce) internal {
+        uint64 issuedAt = uint64(block.timestamp);
+        uint64 deadline = issuedAt + 10 minutes;
+        bytes32 digest = redemption.redemptionAuthorizationDigest(tokenId, nonce, issuedAt, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(AUTHORIZER_KEY, digest);
+        vm.prank(owner);
+        redemption.finalizeRedemption(
+            tokenId, nonce, issuedAt, deadline, authorizationSigner, abi.encodePacked(r, s, v)
+        );
     }
 }

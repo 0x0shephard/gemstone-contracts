@@ -21,11 +21,13 @@ contract DeployLocalE2E is Script {
     struct Actors {
         uint256 adminKey;
         uint256 custodianKey;
+        uint256 authorizerKey;
         uint256 aliceKey;
         uint256 bobKey;
         address admin;
         address operator;
         address custodian;
+        address authorizer;
         address seller;
         address alice;
         address bob;
@@ -57,23 +59,33 @@ contract DeployLocalE2E is Script {
         vm.rpc("anvil_nodeInfo", "[]");
         Actors memory a = _actors();
         Mocks memory m = _deployMocks(a);
-        _configureDeploymentEnv(m);
+        _configureDeploymentEnv(a, m);
         DeployDigitalCarat.Deployment memory d = new DeployDigitalCarat().run();
+        _verifyRedemptionRoles(d, a);
         Seeded memory seeded = _seed(d, a, m);
-        _print(d, m, seeded);
+        _print(d, m, seeded, a.authorizer);
     }
 
     function _actors() private view returns (Actors memory a) {
         a.adminKey = vm.envUint("PRIVATE_KEY");
         a.custodianKey = vm.envUint("E2E_CUSTODIAN_KEY");
+        a.authorizerKey = vm.envUint("E2E_AUTHORIZER_KEY");
         a.aliceKey = vm.envUint("E2E_ALICE_KEY");
         a.bobKey = vm.envUint("E2E_BOB_KEY");
         a.admin = vm.addr(a.adminKey);
         a.operator = vm.envAddress("GIFT_OPERATOR_ADDRESS");
         a.custodian = vm.addr(a.custodianKey);
+        a.authorizer = vm.addr(a.authorizerKey);
         a.seller = vm.envAddress("E2E_SELLER");
         a.alice = vm.addr(a.aliceKey);
         a.bob = vm.addr(a.bobKey);
+        require(a.authorizerKey != 0, "E2E_AUTHORIZER_KEY missing");
+        require(a.authorizer == vm.envAddress("E2E_AUTHORIZER_ADDRESS"), "E2E authorizer key/address mismatch");
+        require(
+            a.authorizer != a.admin && a.authorizer != a.operator && a.authorizer != a.custodian
+                && a.authorizer != a.seller && a.authorizer != a.alice && a.authorizer != a.bob,
+            "E2E authorizer must be a dedicated account"
+        );
     }
 
     function _deployMocks(Actors memory a) private returns (Mocks memory m) {
@@ -88,7 +100,18 @@ contract DeployLocalE2E is Script {
         vm.stopBroadcast();
     }
 
-    function _configureDeploymentEnv(Mocks memory m) private {
+    function _verifyRedemptionRoles(DeployDigitalCarat.Deployment memory d, Actors memory a) private view {
+        require(d.redemption.hasRole(Roles.PROOF_APPROVER_ROLE, a.admin), "E2E proof approver mismatch");
+        require(d.redemption.hasRole(Roles.AUTHORIZER_ROLE, a.authorizer), "E2E authorizer role mismatch");
+        require(d.redemption.hasRole(Roles.RECOVERY_APPROVER_ROLE, a.admin), "E2E recovery approver 1 mismatch");
+        require(d.redemption.hasRole(Roles.RECOVERY_APPROVER_ROLE, a.custodian), "E2E recovery approver 2 mismatch");
+        require(!d.redemption.hasRole(Roles.PROOF_APPROVER_ROLE, a.authorizer), "E2E authorizer has proof role");
+        require(!d.redemption.hasRole(Roles.RECOVERY_APPROVER_ROLE, a.authorizer), "E2E authorizer has recovery role");
+        require(d.redemption.recoveryApprovalThreshold() == 2, "E2E recovery threshold mismatch");
+        require(d.redemption.recoveryDelay() == 7 days, "E2E recovery delay mismatch");
+    }
+
+    function _configureDeploymentEnv(Actors memory a, Mocks memory m) private {
         vm.setEnv("ETH_USD_FEED", vm.toString(address(m.ethFeed)));
         vm.setEnv("ETH_USD_MIN_ANSWER", "50000000000");
         vm.setEnv("ETH_USD_MAX_ANSWER", "1000000000000");
@@ -103,6 +126,9 @@ contract DeployLocalE2E is Script {
             "1000000000000000000000,115792089237316195423570985008687907853269984665640564039457584007913129639935"
         );
         vm.setEnv("RESERVE_BRACKET_BPS", "1500,1000");
+        vm.setEnv("REDEMPTION_PROOF_APPROVER", vm.toString(a.admin));
+        vm.setEnv("REDEMPTION_AUTHORIZER", vm.toString(a.authorizer));
+        vm.setEnv("REDEMPTION_RECOVERY_APPROVERS", string.concat(vm.toString(a.admin), ",", vm.toString(a.custodian)));
     }
 
     function _seed(DeployDigitalCarat.Deployment memory d, Actors memory a, Mocks memory)
@@ -166,7 +192,9 @@ contract DeployLocalE2E is Script {
         vm.stopBroadcast();
     }
 
-    function _print(DeployDigitalCarat.Deployment memory d, Mocks memory m, Seeded memory seeded) private {
+    function _print(DeployDigitalCarat.Deployment memory d, Mocks memory m, Seeded memory seeded, address authorizer)
+        private
+    {
         string memory key = "deployment";
         vm.serializeAddress(key, "DGENFT", address(d.nft));
         vm.serializeAddress(key, "GemRegistry", address(d.registry));
@@ -182,6 +210,7 @@ contract DeployLocalE2E is Script {
         vm.serializeAddress(key, "MusdcFaucet", address(m.faucet));
         vm.serializeAddress(key, "EthUsdFeed", address(m.ethFeed));
         vm.serializeAddress(key, "UsdcUsdFeed", address(m.usdFeed));
+        vm.serializeAddress(key, "RedemptionAuthorizer", authorizer);
         vm.serializeUint(key, "listedGem", seeded.listedGem);
         vm.serializeUint(key, "aliceTokenOne", seeded.aliceTokenOne);
         vm.serializeUint(key, "aliceTokenTwo", seeded.aliceTokenTwo);

@@ -88,7 +88,7 @@ contract RegistryRedemptionLogicTest is BaseTest {
         (uint256 gemId, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://cancel-redemption");
 
         vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("cancel"));
+        redemption.requestRedemption(tokenId, keccak256("cancel"), keccak256("cancel-workflow"));
         assertTrue(nft.transferLocked(tokenId));
 
         vm.prank(buyer);
@@ -103,7 +103,9 @@ contract RegistryRedemptionLogicTest is BaseTest {
     function testRecordedCustodianAndRedeemerCanCancelButStrangerCannot() public {
         (, uint256 custodianTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://custodian-cancel");
         vm.prank(buyer);
-        redemption.requestRedemption(custodianTokenId, keccak256("custodian-cancel"));
+        redemption.requestRedemption(
+            custodianTokenId, keccak256("custodian-cancel"), keccak256("custodian-cancel-workflow")
+        );
 
         vm.prank(stranger);
         vm.expectRevert(RedemptionManager.NotRedemptionCanceller.selector);
@@ -115,7 +117,9 @@ contract RegistryRedemptionLogicTest is BaseTest {
 
         (, uint256 redeemerTokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://redeemer-cancel");
         vm.prank(buyer);
-        redemption.requestRedemption(redeemerTokenId, keccak256("redeemer-cancel"));
+        redemption.requestRedemption(
+            redeemerTokenId, keccak256("redeemer-cancel"), keccak256("redeemer-cancel-workflow")
+        );
         redemption.cancelRedemption(redeemerTokenId);
         assertFalse(nft.transferLocked(redeemerTokenId));
     }
@@ -125,14 +129,14 @@ contract RegistryRedemptionLogicTest is BaseTest {
 
         vm.prank(stranger);
         vm.expectRevert(RedemptionManager.NotTokenOwner.selector);
-        redemption.requestRedemption(tokenId, keccak256("not-owner"));
+        redemption.requestRedemption(tokenId, keccak256("not-owner"), keccak256("not-owner-workflow"));
 
         vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("owner"));
+        redemption.requestRedemption(tokenId, keccak256("owner"), keccak256("owner-workflow"));
 
         vm.prank(stranger);
         vm.expectRevert(RedemptionManager.NotGemCustodian.selector);
-        redemption.confirmRedemption(tokenId);
+        redemption.startFulfillment(tokenId);
     }
 
     function testBlockedWalletCannotRedeemButCanStillTransfer() public {
@@ -148,7 +152,7 @@ contract RegistryRedemptionLogicTest is BaseTest {
 
         vm.prank(buyer);
         vm.expectRevert(RedemptionManager.RedemptionNotAllowed.selector);
-        redemption.requestRedemption(tokenId, keccak256("blocked"));
+        redemption.requestRedemption(tokenId, keccak256("blocked"), keccak256("blocked-workflow"));
     }
 
     function testRedemptionApprovalRequiredMode() public {
@@ -157,11 +161,11 @@ contract RegistryRedemptionLogicTest is BaseTest {
 
         vm.prank(buyer);
         vm.expectRevert(RedemptionManager.RedemptionNotAllowed.selector);
-        redemption.requestRedemption(tokenId, keccak256("unapproved"));
+        redemption.requestRedemption(tokenId, keccak256("unapproved"), keccak256("unapproved-workflow"));
 
         compliance.setRedemptionApproved(buyer, true);
         vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("approved"));
+        redemption.requestRedemption(tokenId, keccak256("approved"), keccak256("approved-workflow"));
 
         assertTrue(nft.transferLocked(tokenId));
     }
@@ -172,7 +176,7 @@ contract RegistryRedemptionLogicTest is BaseTest {
         redemption.pause();
         vm.prank(buyer);
         vm.expectRevert();
-        redemption.requestRedemption(tokenId, keccak256("paused"));
+        redemption.requestRedemption(tokenId, keccak256("paused"), keccak256("paused-workflow"));
     }
 
     function testNftMintBurnAndRoyaltyGuards() public {
@@ -221,7 +225,7 @@ contract RegistryRedemptionLogicTest is BaseTest {
         vm.expectRevert(
             abi.encodeWithSelector(RedemptionManager.RedemptionReserveTooLow.selector, requiredUsd, balanceUsd)
         );
-        redemption.requestRedemption(tokenId, keccak256("below-twenty"));
+        redemption.requestRedemption(tokenId, keccak256("below-twenty"), keccak256("below-twenty-workflow"));
 
         // A partial reserve at 20% is enough; full funding is no longer required.
         vm.prank(buyer);
@@ -229,7 +233,7 @@ contract RegistryRedemptionLogicTest is BaseTest {
         assertGe(reserveManager.reserveBalanceUsd(gemId), twentyPercent);
         assertLt(reserveManager.reserveBalanceUsd(gemId), requiredUsd);
         vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("at-twenty"));
+        redemption.requestRedemption(tokenId, keccak256("at-twenty"), keccak256("at-twenty-workflow"));
         assertTrue(nft.transferLocked(tokenId));
     }
 }

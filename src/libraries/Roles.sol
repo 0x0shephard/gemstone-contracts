@@ -13,4 +13,7 @@ library Roles {
     bytes32 internal constant SETTLER_ROLE = keccak256("SETTLER_ROLE");
     bytes32 internal constant REDEEMER_ROLE = keccak256("REDEEMER_ROLE");
     bytes32 internal constant RESERVE_OPERATOR_ROLE = keccak256("RESERVE_OPERATOR_ROLE");
+    bytes32 internal constant PROOF_APPROVER_ROLE = keccak256("PROOF_APPROVER_ROLE");
+    bytes32 internal constant AUTHORIZER_ROLE = keccak256("AUTHORIZER_ROLE");
+    bytes32 internal constant RECOVERY_APPROVER_ROLE = keccak256("RECOVERY_APPROVER_ROLE");
 }

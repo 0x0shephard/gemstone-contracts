@@ -372,15 +372,13 @@ contract DigitalCaratProtocolTest is BaseTest {
         uint256 gemId = _listedGem(1_000e18, "ipfs://gem-redeem");
         vm.prank(buyer);
         uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
-        vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("pickup"));
+        _prepareApprovedRedemption(tokenId, keccak256("pickup"));
 
         vm.prank(buyer);
         vm.expectRevert(DGENFT.TokenLocked.selector);
         nft.transferFrom(buyer, bidder, tokenId);
 
-        vm.prank(custodian);
-        redemption.confirmRedemption(tokenId);
+        _finalizeAsOwner(tokenId, buyer, keccak256("pickup-nonce"));
         vm.expectRevert();
         nft.ownerOf(tokenId);
 
@@ -396,13 +394,13 @@ contract DigitalCaratProtocolTest is BaseTest {
 
         vm.prank(buyer);
         vm.expectRevert();
-        redemption.requestRedemption(tokenId, keccak256("pickup"));
+        redemption.requestRedemption(tokenId, keccak256("pickup"), keccak256("pickup-workflow-below-reserve"));
 
         vm.prank(buyer);
         reserveManager.fundNative{value: 0.05 ether}(gemId);
 
         vm.prank(buyer);
-        redemption.requestRedemption(tokenId, keccak256("pickup"));
+        redemption.requestRedemption(tokenId, keccak256("pickup"), keccak256("pickup-workflow-funded"));
 
         assertTrue(nft.transferLocked(tokenId));
     }

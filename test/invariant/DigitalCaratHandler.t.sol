@@ -48,6 +48,7 @@ contract DigitalCaratHandler is Test {
     uint256 internal constant MAX_GEMS = 12;
     uint256 internal constant MAX_OFFERS = 16;
     uint256 internal constant MAX_SWAPS = 12;
+    uint256 internal constant AUTHORIZER_KEY = 0xA11CE;
 
     DGENFT public nft;
     GemRegistry public registry;
@@ -415,7 +416,11 @@ contract DigitalCaratHandler is Test {
         if (reserveManager.shortfallUsd(tracked.gemId, gem.priceUsd) != 0) return;
 
         vm.prank(owner);
-        redemption.requestRedemption(tracked.tokenId, keccak256("invariant-redemption"));
+        redemption.requestRedemption(
+            tracked.tokenId,
+            keccak256("invariant-redemption"),
+            keccak256(abi.encode("invariant-workflow", tracked.tokenId))
+        );
     }
 
     function cancelRedemption(uint256 gemSeed) external {
@@ -428,8 +433,26 @@ contract DigitalCaratHandler is Test {
     function confirmRedemption(uint256 gemSeed) external {
         TrackedGem storage tracked = _mintedGem(gemSeed);
         if (tracked.tokenId == 0 || !nft.transferLocked(tracked.tokenId)) return;
+        RedemptionManager.RedemptionRecord memory record = redemption.redemptionRecord(tracked.tokenId);
+        if (record.phase != RedemptionManager.RedemptionPhase.Requested) return;
+        address owner = _safeOwnerOf(tracked.tokenId);
         vm.prank(custodian);
-        redemption.confirmRedemption(tracked.tokenId);
+        redemption.startFulfillment(tracked.tokenId);
+        vm.prank(custodian);
+        redemption.submitFulfillmentProof(tracked.tokenId, keccak256(abi.encode("invariant-proof", tracked.tokenId)));
+        vm.prank(admin);
+        redemption.approveFulfillmentProof(
+            tracked.tokenId, keccak256(abi.encode("invariant-approval", tracked.tokenId)), 1
+        );
+        bytes32 nonce = keccak256(abi.encode("invariant-nonce", tracked.tokenId, block.timestamp));
+        uint64 issuedAt = uint64(block.timestamp);
+        uint64 deadline = issuedAt + 10 minutes;
+        bytes32 digest = redemption.redemptionAuthorizationDigest(tracked.tokenId, nonce, issuedAt, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(AUTHORIZER_KEY, digest);
+        vm.prank(owner);
+        redemption.finalizeRedemption(
+            tracked.tokenId, nonce, issuedAt, deadline, vm.addr(AUTHORIZER_KEY), abi.encodePacked(r, s, v)
+        );
         _syncLiability(tracked);
         tracked.tokenId = 0;
     }

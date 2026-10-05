@@ -132,6 +132,7 @@ contract DeployDigitalCarat is Script {
                 )
             )
         );
+        _initializeRedemptionV2(deployment.redemption);
         deployment.marketplace = Marketplace(
             payable(address(
                     new ERC1967Proxy(
@@ -205,6 +206,22 @@ contract DeployDigitalCarat is Script {
         console2.log("RedemptionManager", address(deployment.redemption));
         console2.log("Marketplace", address(deployment.marketplace));
         console2.log("SwapEscrow", address(deployment.swapEscrow));
+    }
+
+    function _initializeRedemptionV2(RedemptionManager redemption) private {
+        address[] memory noRecoveryApprovers;
+        address[] memory recoveryApprovers = vm.envOr("REDEMPTION_RECOVERY_APPROVERS", ",", noRecoveryApprovers);
+        uint256 threshold = vm.envOr("REDEMPTION_RECOVERY_THRESHOLD", uint256(2));
+        uint256 delay = vm.envOr("REDEMPTION_RECOVERY_DELAY", uint256(7 days));
+        require(threshold <= type(uint8).max, "Recovery threshold too high");
+        require(delay <= type(uint64).max, "Recovery delay too high");
+        redemption.initializeV2(
+            vm.envAddress("REDEMPTION_PROOF_APPROVER"),
+            vm.envAddress("REDEMPTION_AUTHORIZER"),
+            recoveryApprovers,
+            uint8(threshold),
+            uint64(delay)
+        );
     }
 
     function _initializeNftReserveGuard(Deployment memory deployment, address giftOperator) private {
