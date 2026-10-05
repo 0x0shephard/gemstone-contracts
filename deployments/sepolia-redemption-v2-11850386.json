@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-redemption-v2-11850386",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 11850386,
+  "upgradedAt": "2026-10-05T17:54:36Z",
+  "source": {
+    "commit": "96d62541b7fe1da0dd84cd857b7888958408b191",
+    "script": "script/UpgradeRedemptionManager.s.sol:UpgradeRedemptionManager"
+  },
+  "proxy": "0xD3343fC37621c610C0a601594586656B3199006E",
+  "previousImplementation": "0xFE28A96C0064F157f67C8769217A54F8A9c3a300",
+  "implementation": "0x78C70e98750bAD29248f49fA29E654e1C1D2Bc7f",
+  "implementationCodeHash": "0x2deb7adb0899ff3baa80ccf1283ca17c88c845252a5cbcbcaa6609f343fd2d5b",
+  "frontendAbiSha256": "f38a83350d2c370906344d340b0c39e5ec83f39658f8a725e1c8e3789c4df556",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0xeba9ead870f87418cd18132986be2f0c21c8da99d5f4445f288f4e56abddf7cb",
+      "blockNumber": 11850385,
+      "blockHash": "0x282f651ba7cf443358e1b3100058b00b852920bfc11ddda6df37ef26ba2f1843",
+      "status": 1
+    },
+    "proxyUpgradeAndInitialization": {
+      "hash": "0xee83036776fcdf2bda6446298f03de185edec8006ca33817a232b9b9e0a81448",
+      "blockNumber": 11850386,
+      "blockHash": "0x91cc2b879c13db3a0c795bd75fd79f80d762bb58cfbb2b9047033d5efcfd8c66",
+      "status": 1
+    }
+  },
+  "initialization": {
+    "proofApprover": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+    "authorizer": "0x2e45A18995c7C1Db6d651Fd450F2a6C5f085eAc7",
+    "recoveryApprovers": [
+      "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+      "0xE8461FaF26C56580Cd7f12D02A3A8bdA5ac32BB9"
+    ],
+    "recoveryApprovalThreshold": 2,
+    "recoveryDelaySeconds": 604800
+  },
+  "preservedWiring": {
+    "DGENFT": "0x591bB1da8b80C773211301f7fa6f639617182a0d",
+    "GemRegistry": "0x2C4F20f1288Ed0a313C84acb7580da8C53420233",
+    "ReserveManager": "0x4dfC6f9274BAF037027166bB234543fdD8019f1E",
+    "ComplianceRegistry": "0xC34cd372D29cf4E188D0CC59e463433d298b94E2"
+  },
+  "migration": {
+    "auditFromBlock": 11828947,
+    "auditThroughBlock": 11850382,
+    "mintEventsObserved": 0,
+    "redemptionEventsObserved": 0,
+    "openLegacyRequests": 0,
+    "migrationRequired": false
+  },
+  "verification": {
+    "receiptsSuccessful": true,
+    "sourceVerification": "sourcify_exact_match",
+    "sourceVerificationJobId": "1961b1d5-ac3a-494a-81f2-525a58143576",
+    "erc1967ImplementationSlotVerified": true,
+    "v2Initialized": true,
+    "dependencyWiringPreserved": true,
+    "adminAndUpgraderPreserved": true,
+    "configuredRolesVerified": true,
+    "authorizerSeparatedFromProofAndRecovery": true,
+    "recoveryApproversDistinct": true,
+    "recoveryPolicyVerified": true,
+    "protocolCrossRolesVerified": true,
+    "paused": false
+  }
+}
