@@ -305,6 +305,51 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(sale.pendingRefunds(address(attacker), address(0)), 0.5 ether);
     }
 
+    function testLeadingBidderCanCancelBidBeforeClose() public {
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-bid-cancel");
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+
+        uint256 buyerBefore = buyer.balance;
+        vm.prank(buyer);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        vm.warp(block.timestamp + 1 days - 1);
+        vm.prank(buyer);
+        sale.cancelBid(gemId);
+
+        assertEq(buyer.balance, buyerBefore);
+        (,,,,, address highestBidder,, uint256 amount, uint256 usdValue,) = sale.auctions(gemId);
+        assertEq(highestBidder, address(0));
+        assertEq(amount, 0);
+        assertEq(usdValue, 0);
+
+        // The auction stays open, and the next bid starts again from the floor.
+        vm.prank(bidder);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        (,,,,, highestBidder,,,,) = sale.auctions(gemId);
+        assertEq(highestBidder, bidder);
+    }
+
+    function testOnlyLeaderCanCancelBidAndOnlyBeforeClose() public {
+        uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-bid-cancel-guard");
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+
+        vm.prank(buyer);
+        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        vm.prank(bidder);
+        sale.bid{value: 0.6 ether}(gemId, address(0), 0.6 ether);
+
+        // An outbid bidder has nothing escrowed left to cancel.
+        vm.prank(buyer);
+        vm.expectRevert(PrimarySaleAuction.NotHighestBidder.selector);
+        sale.cancelBid(gemId);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bidder);
+        vm.expectRevert(PrimarySaleAuction.AuctionEnded.selector);
+        sale.cancelBid(gemId);
+    }
+
     function testCannotCancelAuctionOnceBidExists() public {
         uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-auction-cancel");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));

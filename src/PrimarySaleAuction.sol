@@ -65,6 +65,7 @@ contract PrimarySaleAuction is
         uint256 indexed gemId, uint256 indexed tokenId, address indexed winner, address paymentAsset, uint256 amount
     );
     event AuctionCancelled(uint256 indexed gemId);
+    event BidCancelled(uint256 indexed gemId, address indexed bidder, address paymentAsset, uint256 amount);
     event AuctionSettlementRefunded(
         uint256 indexed gemId, address indexed bidder, address indexed paymentAsset, uint256 amount, bytes32 reasonHash
     );
@@ -85,6 +86,7 @@ contract PrimarySaleAuction is
     error WrongPrimarySaleMode();
     error TransferFailed();
     error BatchTooLarge();
+    error NotHighestBidder();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -263,6 +265,30 @@ contract PrimarySaleAuction is
         }
 
         emit BidPlaced(gemId, msg.sender, paymentAsset, received, saleUsd);
+    }
+
+    /// @notice Withdraws the caller's leading bid before the auction closes.
+    /// @dev Only the leader has funds escrowed here; outbid bidders were refunded when
+    /// outbid. The auction returns to the floor with no bids and stays open, so any
+    /// bidder may then bid from the floor again. Allowed until `endTime`, the same
+    /// instant after which bidding stops. Works while paused so funds are never stuck.
+    /// @param gemId Auctioned gem id.
+    function cancelBid(uint256 gemId) external nonReentrant {
+        Auction storage auction = auctions[gemId];
+        if (!auction.exists || auction.settled) revert InvalidAuction();
+        if (block.timestamp >= auction.endTime) revert AuctionEnded();
+        if (auction.highestBidder != msg.sender) revert NotHighestBidder();
+
+        address asset = auction.paymentAsset;
+        uint256 amount = auction.amount;
+        auction.highestBidder = address(0);
+        auction.paymentAsset = address(0);
+        auction.amount = 0;
+        auction.usdValue = 0;
+        auction.reserveUsd = 0;
+
+        _creditRefund(msg.sender, asset, amount);
+        emit BidCancelled(gemId, msg.sender, asset, amount);
     }
 
     /// @notice Settles an ended auction or refunds the highest bidder if settlement cannot mint.
