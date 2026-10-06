@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-auction-cancel-bid-11855506",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 11855506,
+  "upgradedAt": "2026-10-06T11:06:48Z",
+  "source": {
+    "commit": "ed2fcca830c159407600bc40a90408f66d8fdb78",
+    "script": "script/UpgradePrimarySaleAuction.s.sol:UpgradePrimarySaleAuction"
+  },
+  "proxy": "0x7C6a7deCDB433B3B47A4BB73C59E0Cd089e6F1A3",
+  "previousImplementation": "0xd42b6190ef209BD08e31B00796ceA4D185c159AB",
+  "implementation": "0xFae91B2325656dc4Cecf96710285EEE08e53Fa0b",
+  "implementationCodeHash": "0xb693451123b4f75a9656fb669de46a2608379a3bf5003f436535ffc9b1cb85de",
+  "frontendAbiSha256": "34023fac391ed779c06b889614f714516be3d953202e0c376cf2b5d0c217ccf5",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x69d189c3a32ba3ab0c32d7f96ea37b5baf3ce97ed86f46f4b8cbf4ef6212efea",
+      "blockNumber": 11855504,
+      "blockHash": "0x1b2c7b0017b1db151f2b65c2d73a9e6e1cd047cf8a54d64679b8bfb5ca70d1dd",
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0xf063fddc1cddc76d295bfa700ad67c8e9f08be0ad49ad8772b21240b37f67118",
+      "blockNumber": 11855506,
+      "blockHash": "0x4e310ba022a22a20ea61097936cbec1b5678c69f7da664d23d69c5b3089b1b8d",
+      "status": 1
+    }
+  },
+  "change": "Adds cancelBid(gemId): the leading bidder may withdraw a primary-auction bid before endTime."
+}
