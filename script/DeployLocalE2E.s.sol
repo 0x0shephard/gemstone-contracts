@@ -21,6 +21,7 @@ contract DeployLocalE2E is Script {
     struct Actors {
         uint256 adminKey;
         uint256 custodianKey;
+        uint256 operatorKey;
         uint256 authorizerKey;
         uint256 aliceKey;
         uint256 bobKey;
@@ -74,6 +75,10 @@ contract DeployLocalE2E is Script {
         a.bobKey = vm.envUint("E2E_BOB_KEY");
         a.admin = vm.addr(a.adminKey);
         a.operator = vm.envAddress("GIFT_OPERATOR_ADDRESS");
+        // Seller activation registers every production gem with the operator as
+        // its custodian, which is what lets the server sign redemption steps.
+        a.operatorKey = vm.envUint("E2E_OPERATOR_KEY");
+        require(vm.addr(a.operatorKey) == a.operator, "E2E operator key/address mismatch");
         a.custodian = vm.addr(a.custodianKey);
         a.authorizer = vm.addr(a.authorizerKey);
         a.seller = vm.envAddress("E2E_SELLER");
@@ -137,6 +142,7 @@ contract DeployLocalE2E is Script {
     {
         vm.startBroadcast(a.adminKey);
         d.registry.grantRole(Roles.CUSTODIAN_ROLE, a.custodian);
+        d.registry.grantRole(Roles.CUSTODIAN_ROLE, a.operator);
         d.registry.setSellerApproval(a.seller, true);
         d.compliance.setRedemptionApproved(a.alice, true);
         uint256[11] memory gems = [
@@ -154,7 +160,7 @@ contract DeployLocalE2E is Script {
         ];
         vm.stopBroadcast();
 
-        vm.startBroadcast(a.custodianKey);
+        vm.startBroadcast(a.operatorKey);
         for (uint256 i = 0; i < gems.length; i++) {
             d.registry.confirmCustody(gems[i]);
         }
@@ -227,7 +233,7 @@ contract DeployLocalE2E is Script {
 
     function _register(GemRegistry registry, Actors memory a, string memory name) private returns (uint256) {
         string memory uri = _metadata(name);
-        return registry.registerGem(a.seller, a.custodian, uri, keccak256(bytes(uri)));
+        return registry.registerGem(a.seller, a.operator, uri, keccak256(bytes(uri)));
     }
 
     /// @dev Inline metadata, so the suite needs no IPFS gateway.

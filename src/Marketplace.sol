@@ -324,6 +324,27 @@ contract Marketplace is
         }
     }
 
+    /// @notice Withdraws the caller's own offer and refunds its escrow.
+    /// @dev An offer on an unlisted token can be withdrawn at any time while it is
+    /// active. The leading bid on a listed token can be withdrawn until its
+    /// 24-hour auction ends; the listing then has no bids and stays listed at its
+    /// ask, so the seller may cancel it or a new bid may start a fresh auction.
+    /// Works while paused so escrowed funds are never stuck.
+    /// @param offerId Offer id to withdraw.
+    function cancelOffer(uint256 offerId) external nonReentrant {
+        Offer memory offer = offers[offerId];
+        if (!offer.active) revert InvalidOffer();
+        if (offer.bidder != msg.sender) revert NotBidder();
+        if (listingWinningOffer[offer.tokenId] == offerId) {
+            if (block.timestamp >= listingAuctionEnd[offer.tokenId]) revert Expired();
+            delete listingWinningOffer[offer.tokenId];
+            delete listingAuctionEnd[offer.tokenId];
+        }
+        delete offers[offerId];
+        _refundOrCredit(offer.bidder, offer.paymentAsset, offer.amount);
+        emit OfferCancelled(offerId);
+    }
+
     /// @notice Cancels and refunds an expired offer.
     /// @param offerId Offer id to cancel.
     function cancelExpiredOffer(uint256 offerId) external nonReentrant {

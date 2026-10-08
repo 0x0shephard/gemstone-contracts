@@ -122,6 +122,89 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         assertEq(bidder.balance, bidderBefore);
     }
 
+    function testBidderCanWithdrawAnOfferBeforeExpiry() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://market-offer-withdraw");
+
+        uint256 bidderBefore = bidder.balance;
+        vm.prank(bidder);
+        uint256 offerId = marketplace.createOffer{value: 0.5 ether}(tokenId, address(0), 0.5 ether);
+
+        vm.prank(stranger);
+        vm.expectRevert(Marketplace.NotBidder.selector);
+        marketplace.cancelOffer(offerId);
+
+        vm.prank(bidder);
+        marketplace.cancelOffer(offerId);
+
+        assertEq(bidder.balance, bidderBefore);
+        (,,,,,, bool active) = marketplace.offers(offerId);
+        assertFalse(active);
+
+        vm.prank(buyer);
+        vm.expectRevert(Marketplace.InvalidOffer.selector);
+        marketplace.acceptOffer(offerId);
+
+        vm.prank(bidder);
+        vm.expectRevert(Marketplace.InvalidOffer.selector);
+        marketplace.cancelOffer(offerId);
+    }
+
+    function testLeadingListedBidCanBeWithdrawnBeforeTheAuctionEnds() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction-withdraw");
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_100e18);
+        vm.stopPrank();
+
+        uint256 bidderBefore = bidder.balance;
+        vm.prank(bidder);
+        uint256 offerId = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+
+        vm.prank(bidder);
+        marketplace.cancelOffer(offerId);
+
+        assertEq(bidder.balance, bidderBefore);
+        assertEq(marketplace.listingWinningOffer(tokenId), 0);
+        assertEq(marketplace.listingAuctionEnd(tokenId), 0);
+        // The listing survives with no bids: the seller can cancel it again,
+        // and a new qualifying bid starts a fresh 24-hour auction.
+        vm.prank(stranger);
+        uint256 next = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+        assertEq(marketplace.listingWinningOffer(tokenId), next);
+        assertEq(marketplace.listingAuctionEnd(tokenId), block.timestamp + 1 days);
+    }
+
+    function testLeadingListedBidCannotBeWithdrawnOnceTheAuctionEnds() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction-withdraw-late");
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_100e18);
+        vm.stopPrank();
+
+        vm.prank(bidder);
+        uint256 offerId = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bidder);
+        vm.expectRevert(Marketplace.Expired.selector);
+        marketplace.cancelOffer(offerId);
+    }
+
+    function testOfferWithdrawalWorksWhilePaused() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://market-offer-paused");
+
+        vm.prank(bidder);
+        uint256 offerId = marketplace.createOffer{value: 0.5 ether}(tokenId, address(0), 0.5 ether);
+        marketplace.pause();
+
+        uint256 bidderBefore = bidder.balance;
+        vm.prank(bidder);
+        marketplace.cancelOffer(offerId);
+        assertEq(bidder.balance, bidderBefore + 0.5 ether);
+    }
+
     function testListedTokenBidSettlesAutomaticallyAfterTwentyFourHours() public {
         (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction");
 
