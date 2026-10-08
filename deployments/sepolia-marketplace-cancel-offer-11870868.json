@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-marketplace-cancel-offer-11870868",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 11870868,
+  "upgradedAt": "2026-10-08T14:49:48Z",
+  "source": {
+    "commit": "da58eea835779e46651183889aa0c10204878761",
+    "method": "cast send --create (gas limit 32000000), then upgradeToAndCall; script/UpgradeMarketplace.s.sol under-estimated gas"
+  },
+  "proxy": "0x4410987B2679bF46AcF75f69372177E882582694",
+  "previousImplementation": "0xE6d85115Fe37957500Fb199e6F46Bb5C7b8E5c91",
+  "implementation": "0x35C601878761aBeD56edefD2252A5825332df9f6",
+  "implementationCodeHash": "0x40781772d07ba389ad257ece7fec5d871fae2c5e95982d7c54fdbf94253f48f4",
+  "frontendAbiSha256": "161f6ac54ae9c4706b14d1abef2a0bc046b49071e20334e7710fc8a6091eb6d8",
+  "transactions": {
+    "failedImplementationDeployment": {
+      "hash": "0xbd396fcc76f6a57d9fe734d73da4ac66e46216c2eca5f2a30ec6277b543518c5",
+      "blockNumber": 11870831,
+      "status": 0,
+      "note": "Out of gas at 5536404: Sepolia now prices contract creation about 7x above Foundry's local simulation."
+    },
+    "implementationDeployment": {
+      "hash": "0xd0a3e225987ceb4bb3f5e66aeb2afe25f5f6963f1b3cece65ce32b8db808fe72",
+      "blockNumber": 11870862,
+      "blockHash": "0x71e5e017dbe31629151b64dba59218d58eeba27b3150172a0aba88f3c68c3487",
+      "gasUsed": 30158179,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0xe2fab5f6c6b3d670c8b1dc61cb84632bfb6da9ce69855ee378d061b915a52fcc",
+      "blockNumber": 11870868,
+      "blockHash": "0xecc2e8aad67e8c58c67b1c95d59fdf264b3ae2881faeec58cc87c55f137946d1",
+      "status": 1
+    }
+  },
+  "verification": {
+    "runtimeBytecodeMatchesBuildExceptImmutables": true,
+    "storageWiringUnchanged": true,
+    "forkRehearsalPassed": true
+  },
+  "change": "Adds cancelOffer(offerId): a bidder withdraws an active offer, or a leading listed-token bid before its 24-hour auction ends."
+}
