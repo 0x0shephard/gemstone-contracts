@@ -194,8 +194,10 @@ contract DGENFT is
     }
 
     /// @dev Enforces redemption locks and the central zero-reserve rule for every transfer path.
-    ///      Mint and burn remain exempt. At zero reserve, a trusted escrow may only return the
-    ///      token itself to the depositor recorded when custody began.
+    ///      Mint and burn remain exempt. The rule applies only to a token that owes reserve under
+    ///      the current policy and holds none. Such a token may enter a trusted escrow only when
+    ///      the escrow itself pulls it in, and may leave one only back to the recorded depositor
+    ///      unless a sale path funds the reserve first.
     function _update(address to, uint256 tokenId, address auth)
         internal
         override(ERC721Upgradeable)
@@ -207,10 +209,13 @@ contract DGENFT is
             if (address(reserveManager) == address(0)) revert ReserveGuardNotConfigured();
 
             uint256 gemId = tokenGem[tokenId];
-            if (reserveManager.reserveBalanceUsd(gemId) == 0) {
+            if (reserveManager.reserveBalanceUsd(gemId) == 0 && _owesReserve(gemId)) {
                 bool escrowReturn = trustedEscrow[previousOwner] && auth == previousOwner
                     && escrowDepositor[tokenId] == to && to != previousOwner;
-                if (!escrowReturn) revert ZeroReserveTransfer();
+                // Marketplace listing pulls the token in, and its buy, offer and auction paths fund
+                // the shortfall before releasing it. A push (owner sends to an escrow) stays blocked.
+                bool escrowPull = trustedEscrow[to] && auth == to && !trustedEscrow[previousOwner];
+                if (!escrowReturn && !escrowPull) revert ZeroReserveTransfer();
             }
 
             if (to != previousOwner) {
@@ -224,6 +229,13 @@ contract DGENFT is
             }
         }
         return super._update(to, tokenId, auth);
+    }
+
+    /// @dev True when the reserve policy requires a non-zero reserve for this gem at its registry
+    ///      price. At a 0% rate with no per-gem minimum nothing is owed, so the token moves freely.
+    function _owesReserve(uint256 gemId) private view returns (bool) {
+        uint256 priceUsd = reserveManager.registry().getGem(gemId).priceUsd;
+        return reserveManager.requiredReserveUsd(gemId, priceUsd) != 0;
     }
 
     function _addTrustedEscrow(address escrow) private {
