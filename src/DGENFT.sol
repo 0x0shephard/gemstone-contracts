@@ -231,11 +231,14 @@ contract DGENFT is
         return super._update(to, tokenId, auth);
     }
 
-    /// @dev True when the reserve policy requires a non-zero reserve for this gem at its registry
-    ///      price. At a 0% rate with no per-gem minimum nothing is owed, so the token moves freely.
+    /// @dev True when the reserve policy charges this gem anything: a rate at its registry price,
+    ///      or a per-gem minimum. At a 0% rate with no minimum nothing is owed, so the token moves
+    ///      freely. The rate is checked rather than the computed amount, so a gem with no registry
+    ///      price (never listed) still counts as owing while a rate is in force.
     function _owesReserve(uint256 gemId) private view returns (bool) {
+        if (reserveManager.minimumReserveUsd(gemId) != 0) return true;
         uint256 priceUsd = reserveManager.registry().getGem(gemId).priceUsd;
-        return reserveManager.requiredReserveUsd(gemId, priceUsd) != 0;
+        return reserveManager.reserveBpsFor(priceUsd) != 0;
     }
 
     function _addTrustedEscrow(address escrow) private {
