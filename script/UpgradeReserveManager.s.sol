@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {UpgradePreflight} from "./UpgradePreflight.sol";
 import {ReserveManager} from "../src/ReserveManager.sol";
 
 /// @notice Upgrades the existing UUPS ReserveManager proxy in place.
@@ -12,6 +13,7 @@ contract UpgradeReserveManager is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         require(block.chainid == vm.envUint("EXPECTED_CHAIN_ID"), "RPC chain does not match EXPECTED_CHAIN_ID");
         address proxy = vm.envAddress("RESERVE_MANAGER_ADDRESS");
+        UpgradePreflight.requireSequencerAwareRegistry(address(ReserveManager(payable(proxy)).paymentRegistry()));
 
         vm.startBroadcast(deployerKey);
         implementation = address(new ReserveManager());

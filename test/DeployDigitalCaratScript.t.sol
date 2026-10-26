@@ -127,6 +127,26 @@ contract DeployDigitalCaratScriptTest is Test {
         // The reserve-free policy charges nothing.
         assertEq(deployment.reserveManager.reserveBpsFor(500e18), 0);
         assertEq(deployment.reserveManager.reserveBpsFor(5_000e18), 0);
+
+        // A Sepolia (non-production) deployment needs none of the L2 or production settings and
+        // keeps the testnet behaviour: no uptime check, admin minting for fixtures.
+        vm.chainId(11155111);
+        vm.setEnv("EXPECTED_CHAIN_ID", "11155111");
+        vm.setEnv("PRODUCTION_DEPLOYMENT", "false");
+        vm.setEnv("SEQUENCER_UPTIME_FEED", vm.toString(address(0)));
+        vm.setEnv("COLLECTION_OWNER", vm.toString(address(0)));
+        vm.setEnv("CONTRACT_URI", "");
+        vm.setEnv("ROYALTY_BPS", "0");
+        vm.setEnv("ETH_USD_STALE_AFTER", "3600");
+        vm.setEnv("PAYMENT_TOKEN_STALE_AFTERS", "3600");
+        DeployDigitalCarat.Deployment memory testnet = new DeployDigitalCarat().run();
+        assertEq(address(testnet.payments.sequencerUptimeFeed()), address(0));
+        assertTrue(testnet.nft.hasRole(Roles.MINTER_ROLE, admin));
+        assertEq(testnet.nft.owner(), address(0));
+        assertEq(testnet.nft.contractURI(), "");
+        ethFeed.updateAnswer(2_000e8);
+        assertEq(testnet.payments.quoteTokenToUsd(address(0), 1 ether), 2_000e18);
+        testnet.reserveManager.requireSolvent();
     }
 
     function _expectDeployRevert(string memory name, string memory value, string memory reason) private {

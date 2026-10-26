@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {UpgradePreflight} from "./UpgradePreflight.sol";
 import {PrimarySaleAuction} from "../src/PrimarySaleAuction.sol";
 
 /// @notice Upgrades the existing Sepolia UUPS PrimarySaleAuction proxy in place.
@@ -10,6 +11,7 @@ contract UpgradePrimarySaleAuction is Script {
     function run() external returns (address implementation) {
         uint256 adminKey = vm.envUint("PRIVATE_KEY");
         address proxy = vm.envAddress("PRIMARY_SALE_ADDRESS");
+        UpgradePreflight.requireSequencerAwareRegistry(address(PrimarySaleAuction(payable(proxy)).paymentRegistry()));
 
         vm.startBroadcast(adminKey);
         implementation = address(new PrimarySaleAuction());
