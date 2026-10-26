@@ -30,6 +30,9 @@ contract DGENFT is
     ReserveManager public reserveManager;
     mapping(address escrow => bool trusted) public trustedEscrow;
     mapping(uint256 tokenId => address depositor) public escrowDepositor;
+    // Appended for outside marketplaces (OpenSea and others). Do not reorder these fields.
+    address private _collectionOwner;
+    string private _contractURI;
 
     uint256 public constant MAX_LEGACY_ESCROW_MIGRATIONS = 100;
 
@@ -40,6 +43,10 @@ contract DGENFT is
     event EscrowDepositRecorded(uint256 indexed tokenId, address indexed escrow, address indexed depositor);
     event EscrowDepositCleared(uint256 indexed tokenId, address indexed escrow, address indexed recipient);
     event LegacyEscrowDepositBootstrapped(uint256 indexed tokenId, address indexed escrow, address indexed depositor);
+    /// @dev Same signature as OpenZeppelin `Ownable`, which marketplaces index to find the collection owner.
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    /// @dev ERC-7572: tells marketplaces to re-read `contractURI`.
+    event ContractURIUpdated();
 
     error InvalidAddress();
     error GemAlreadyMinted();
@@ -240,6 +247,33 @@ contract DGENFT is
         if (reserveManager.minimumReserveUsd(gemId) != 0) return true;
         uint256 priceUsd = reserveManager.registry().getGem(gemId).priceUsd;
         return reserveManager.reserveBpsFor(priceUsd) != 0;
+    }
+
+    /// @notice The collection owner marketplaces show and let edit the collection page (OpenSea
+    ///         reads `owner()`). Display only: it grants no permission in this contract, where
+    ///         every power stays with AccessControl roles.
+    function owner() external view returns (address) {
+        return _collectionOwner;
+    }
+
+    /// @notice Sets the marketplace-facing collection owner. Use a Safe: marketplaces let this
+    ///         account edit the collection page and, off-chain, its payout settings.
+    /// @param newOwner New collection owner, or address(0) to leave the collection unclaimed.
+    function setCollectionOwner(address newOwner) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit OwnershipTransferred(_collectionOwner, newOwner);
+        _collectionOwner = newOwner;
+    }
+
+    /// @notice ERC-7572 collection metadata URI (name, description, image, external link).
+    function contractURI() external view returns (string memory) {
+        return _contractURI;
+    }
+
+    /// @notice Sets the ERC-7572 collection metadata URI.
+    /// @param uri JSON metadata URI, or empty to clear it.
+    function setContractURI(string calldata uri) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _contractURI = uri;
+        emit ContractURIUpdated();
     }
 
     function _addTrustedEscrow(address escrow) private {

@@ -51,6 +51,10 @@ contract DeployDigitalCaratScriptTest is Test {
             "1000000000000000000000,115792089237316195423570985008687907853269984665640564039457584007913129639935"
         );
         vm.setEnv("RESERVE_BRACKET_BPS", "0,0");
+        vm.setEnv("COLLECTION_OWNER", vm.toString(address(0x8001)));
+        vm.setEnv("CONTRACT_URI", "https://digitalcarat.io/collection.json");
+        vm.setEnv("ROYALTY_RECEIVER", vm.toString(address(0x8002)));
+        vm.setEnv("ROYALTY_BPS", "250");
         vm.setEnv("REDEMPTION_PROOF_APPROVER", vm.toString(address(0x7001)));
         vm.setEnv("REDEMPTION_AUTHORIZER", vm.toString(address(0x7002)));
         vm.setEnv(
@@ -78,6 +82,14 @@ contract DeployDigitalCaratScriptTest is Test {
         vm.stopBroadcast();
         vm.setEnv("PAYMENT_TOKEN_STALE_AFTERS", "90000");
 
+        // Royalties are capped at 10%.
+        vm.setEnv("ROYALTY_BPS", "1001");
+        DeployDigitalCarat greedy = new DeployDigitalCarat();
+        vm.expectRevert(bytes("ROYALTY_BPS above 10%"));
+        greedy.run();
+        vm.stopBroadcast();
+        vm.setEnv("ROYALTY_BPS", "250");
+
         DeployDigitalCarat.Deployment memory deployment = new DeployDigitalCarat().run();
         address admin = vm.addr(DEPLOYER_KEY);
 
@@ -96,6 +108,13 @@ contract DeployDigitalCaratScriptTest is Test {
         // A USDC price a day old still quotes; it would not under a one-hour window.
         vm.warp(block.timestamp + 23 hours);
         assertEq(deployment.payments.quoteTokenToUsd(address(usdc), 100e6), 100e18);
+
+        // Outside marketplaces see the collection owner, metadata and royalty.
+        assertEq(deployment.nft.owner(), address(0x8001));
+        assertEq(deployment.nft.contractURI(), "https://digitalcarat.io/collection.json");
+        (address royaltyReceiver, uint256 royalty) = deployment.nft.royaltyInfo(1, 10_000);
+        assertEq(royaltyReceiver, address(0x8002));
+        assertEq(royalty, 250);
 
         // The reserve-free policy charges nothing.
         assertEq(deployment.reserveManager.reserveBpsFor(500e18), 0);

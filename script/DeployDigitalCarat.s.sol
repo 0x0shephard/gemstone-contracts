@@ -17,6 +17,8 @@ import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 
 contract DeployDigitalCarat is Script {
+    uint256 private constant MAX_ROYALTY_BPS = 1_000;
+
     struct Deployment {
         DGENFT nft;
         GemRegistry registry;
@@ -181,6 +183,7 @@ contract DeployDigitalCarat is Script {
         deployment.nft.revokeRole(Roles.LOCKER_ROLE, admin);
         // In production only the primary sale mints; test networks keep admin minting for fixtures.
         if (productionDeployment) deployment.nft.revokeRole(Roles.MINTER_ROLE, admin);
+        _configureCollection(deployment.nft, admin, productionDeployment);
         deployment.registry.grantRole(Roles.MINTER_ROLE, address(deployment.sale));
         deployment.registry.grantRole(Roles.REDEEMER_ROLE, address(deployment.redemption));
         deployment.treasury.grantRole(Roles.SETTLER_ROLE, address(deployment.sale));
@@ -281,6 +284,30 @@ contract DeployDigitalCarat is Script {
             // casting to uint48 is safe because the value is capped at one day above.
             // forge-lint: disable-next-line(unsafe-typecast)
             payments.setSequencerUptimeFeed(uptimeFeed, uint48(gracePeriod));
+        }
+    }
+
+    /// @dev Marketplace-facing collection settings, all optional: the owner OpenSea lets edit the
+    ///      collection page, the ERC-7572 metadata URI, and the ERC-2981 royalty.
+    function _configureCollection(DGENFT nft, address admin, bool productionDeployment) private {
+        address collectionOwner = vm.envOr("COLLECTION_OWNER", address(0));
+        if (collectionOwner != address(0)) {
+            if (productionDeployment) require(collectionOwner != admin, "COLLECTION_OWNER must not be the deployer");
+            nft.setCollectionOwner(collectionOwner);
+        }
+
+        string memory uri = vm.envOr("CONTRACT_URI", string(""));
+        if (bytes(uri).length != 0) nft.setContractURI(uri);
+
+        uint256 royaltyBps = vm.envOr("ROYALTY_BPS", uint256(0));
+        require(royaltyBps <= MAX_ROYALTY_BPS, "ROYALTY_BPS above 10%");
+        if (royaltyBps != 0) {
+            address receiver = vm.envAddress("ROYALTY_RECEIVER");
+            require(receiver != address(0), "ROYALTY_RECEIVER missing");
+            if (productionDeployment) require(receiver != admin, "ROYALTY_RECEIVER must not be the deployer");
+            // casting to uint96 is safe because the value is capped at MAX_ROYALTY_BPS above.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            nft.setDefaultRoyalty(receiver, uint96(royaltyBps));
         }
     }
 
