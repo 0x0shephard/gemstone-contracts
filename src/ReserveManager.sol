@@ -397,6 +397,18 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         emit ReserveClaimed(msg.sender, recipient, asset, amount);
     }
 
+    /// @notice Returns whether any reserve asset is held for a gem, without consulting oracles.
+    /// @dev DGENFT's transfer guard uses this, so a stale feed or an L2 sequencer outage that
+    ///      zeroes `reserveBalanceUsd` does not freeze tokens that hold a reserve.
+    /// @param gemId Gem id to check.
+    function hasReserveAssets(uint256 gemId) external view returns (bool) {
+        address[] storage assets = _reserveAssets[gemId];
+        for (uint256 i = 0; i < assets.length; i++) {
+            if (reserveAssetBalance[gemId][assets[i]] != 0) return true;
+        }
+        return false;
+    }
+
     /// @notice Returns the current oracle-valued reserve balance for a gem.
     /// @dev Assets whose quote is unavailable are conservatively valued at zero.
     function reserveBalanceUsd(uint256 gemId) public view returns (uint256 usdValue) {

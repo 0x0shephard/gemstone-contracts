@@ -33,12 +33,19 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
     address[] private _paymentTokens;
     mapping(address token => bool known) private _paymentTokenKnown;
 
+    // Appended for the V3 implementation. On an L2 such as Arbitrum, Chainlink
+    // prices are only trusted while the sequencer is up and has been for a grace
+    // period after any outage. Unset (the default) on L1 and testnets.
+    AggregatorV3Interface public sequencerUptimeFeed;
+    uint48 public sequencerGracePeriod;
+
     event PaymentTokenSet(
         address indexed token, address indexed feed, uint48 staleAfter, uint8 tokenDecimals, bool enabled
     );
     event PaymentTokenRemoved(address indexed token);
     event PaymentTokenBoundsSet(address indexed token, int192 minAnswer, int192 maxAnswer);
     event PaymentTokenTracked(address indexed token);
+    event SequencerUptimeFeedSet(address indexed feed, uint48 gracePeriod);
 
     error InvalidAddress();
     error InvalidFeed();
@@ -46,6 +53,8 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
     error TokenNotEnabled();
     error StalePrice();
     error InvalidPrice();
+    error SequencerDown();
+    error SequencerGracePeriodNotOver();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -119,6 +128,24 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
         emit PaymentTokenBoundsSet(token, minAnswer, maxAnswer);
     }
 
+    /// @notice Sets, or clears with address(0), the L2 sequencer uptime feed checked before every quote.
+    /// @dev The feed must answer 0 (up) and have been up for longer than `gracePeriod` seconds.
+    /// @param feed Chainlink L2 sequencer uptime feed, or address(0) to disable the check.
+    /// @param gracePeriod Seconds after the sequencer comes back up before prices are trusted again.
+    function setSequencerUptimeFeed(address feed, uint48 gracePeriod) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (feed == address(0)) {
+            if (gracePeriod != 0) revert InvalidFeed();
+        } else {
+            if (gracePeriod == 0) revert InvalidFeed();
+            // A wrong address would make every quote revert; reject anything that is not a live feed.
+            (, int256 status, uint256 startedAt,,) = AggregatorV3Interface(feed).latestRoundData();
+            if ((status != 0 && status != 1) || startedAt == 0) revert InvalidFeed();
+        }
+        sequencerUptimeFeed = AggregatorV3Interface(feed);
+        sequencerGracePeriod = gracePeriod;
+        emit SequencerUptimeFeedSet(feed, gracePeriod);
+    }
+
     /// @notice Removes a token from accepted payment assets.
     /// @param token Payment token address to remove.
     function removeToken(address token) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -173,6 +200,7 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
 
     function _validatedPrice(TokenConfig memory config) private view returns (uint256 answer, uint8 feedDecimals) {
         if (!config.enabled) revert TokenNotEnabled();
+        _requireSequencerUp();
 
         AggregatorV3Interface feed = AggregatorV3Interface(config.feed);
         (uint80 roundId, int256 signedAnswer, uint256 startedAt, uint256 updatedAt,) = feed.latestRoundData();
@@ -187,6 +215,19 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
         // forge-lint: disable-next-line(unsafe-typecast)
         answer = uint256(signedAnswer);
         feedDecimals = feed.decimals();
+    }
+
+    /// @dev Reverts while the configured L2 sequencer is down or inside its post-outage grace
+    ///      period, when L2 feeds may be stale. No-op when no uptime feed is configured.
+    function _requireSequencerUp() private view {
+        AggregatorV3Interface uptimeFeed = sequencerUptimeFeed;
+        if (address(uptimeFeed) == address(0)) return;
+        // answer: 0 = up, 1 = down; startedAt: when the status last changed.
+        (, int256 status, uint256 startedAt,,) = uptimeFeed.latestRoundData();
+        if (status != 0 || startedAt == 0) revert SequencerDown();
+        if (startedAt > block.timestamp || block.timestamp - startedAt <= sequencerGracePeriod) {
+            revert SequencerGracePeriodNotOver();
+        }
     }
 
     function _trackPaymentToken(address token) private {

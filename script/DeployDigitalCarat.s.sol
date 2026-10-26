@@ -17,6 +17,8 @@ import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 
 contract DeployDigitalCarat is Script {
+    uint256 private constant ARBITRUM_ONE = 42161;
+
     struct Deployment {
         DGENFT nft;
         GemRegistry registry;
@@ -179,6 +181,8 @@ contract DeployDigitalCarat is Script {
         deployment.nft.grantRole(Roles.LOCKER_ROLE, address(deployment.redemption));
         deployment.nft.revokeRole(Roles.BURNER_ROLE, admin);
         deployment.nft.revokeRole(Roles.LOCKER_ROLE, admin);
+        // In production only the primary sale mints; test networks keep admin minting for fixtures.
+        if (productionDeployment) deployment.nft.revokeRole(Roles.MINTER_ROLE, admin);
         deployment.registry.grantRole(Roles.MINTER_ROLE, address(deployment.sale));
         deployment.registry.grantRole(Roles.REDEEMER_ROLE, address(deployment.redemption));
         deployment.treasury.grantRole(Roles.SETTLER_ROLE, address(deployment.sale));
@@ -234,32 +238,59 @@ contract DeployDigitalCarat is Script {
     }
 
     function _configurePayments(PaymentTokenRegistry payments, bool productionDeployment) private {
-        uint48 staleAfter = uint48(vm.envUint("PRICE_STALE_AFTER"));
+        // Each feed has its own heartbeat (Arbitrum's ETH/USD and USDC/USD update at least
+        // daily), so staleness is set per feed; PRICE_STALE_AFTER is the default for all.
+        uint256 defaultStaleAfter = vm.envUint("PRICE_STALE_AFTER");
         _configurePaymentToken(
             payments,
             address(0),
             vm.envAddress("ETH_USD_FEED"),
-            staleAfter,
+            _staleAfter(vm.envOr("ETH_USD_STALE_AFTER", defaultStaleAfter)),
             vm.envInt("ETH_USD_MIN_ANSWER"),
             vm.envInt("ETH_USD_MAX_ANSWER")
         );
 
         address[] memory empty;
         int256[] memory emptyInt;
+        uint256[] memory emptyUint;
         address[] memory tokens = vm.envOr("PAYMENT_TOKENS", ",", empty);
         address[] memory feeds = vm.envOr("PAYMENT_TOKEN_USD_FEEDS", ",", empty);
         int256[] memory minAnswers = vm.envOr("PAYMENT_TOKEN_MIN_ANSWERS", ",", emptyInt);
         int256[] memory maxAnswers = vm.envOr("PAYMENT_TOKEN_MAX_ANSWERS", ",", emptyInt);
+        uint256[] memory staleAfters = vm.envOr("PAYMENT_TOKEN_STALE_AFTERS", ",", emptyUint);
         require(
             tokens.length == feeds.length && tokens.length == minAnswers.length && tokens.length == maxAnswers.length,
             "PAYMENT_TOKENS configuration length mismatch"
+        );
+        require(
+            staleAfters.length == 0 || staleAfters.length == tokens.length, "PAYMENT_TOKEN_STALE_AFTERS length mismatch"
         );
         if (productionDeployment) require(tokens.length != 0, "Production stablecoin missing");
 
         for (uint256 i = 0; i < tokens.length; i++) {
             require(tokens[i] != address(0), "PAYMENT_TOKENS cannot contain native asset");
+            uint48 staleAfter = _staleAfter(staleAfters.length == 0 ? defaultStaleAfter : staleAfters[i]);
             _configurePaymentToken(payments, tokens[i], feeds[i], staleAfter, minAnswers[i], maxAnswers[i]);
         }
+
+        address uptimeFeed = vm.envOr("SEQUENCER_UPTIME_FEED", address(0));
+        if (productionDeployment && block.chainid == ARBITRUM_ONE) {
+            require(uptimeFeed != address(0), "SEQUENCER_UPTIME_FEED required on Arbitrum");
+        }
+        if (uptimeFeed != address(0)) {
+            uint256 gracePeriod = vm.envOr("SEQUENCER_GRACE_PERIOD", uint256(1 hours));
+            require(gracePeriod != 0 && gracePeriod <= 1 days, "SEQUENCER_GRACE_PERIOD out of range");
+            // casting to uint48 is safe because the value is capped at one day above.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            payments.setSequencerUptimeFeed(uptimeFeed, uint48(gracePeriod));
+        }
+    }
+
+    function _staleAfter(uint256 seconds_) private pure returns (uint48) {
+        require(seconds_ != 0 && seconds_ <= 7 days, "Price staleness out of range");
+        // casting to uint48 is safe because the value is capped at seven days above.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint48(seconds_);
     }
 
     function _configurePaymentToken(

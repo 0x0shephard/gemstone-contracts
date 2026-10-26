@@ -195,7 +195,8 @@ contract DGENFT is
 
     /// @dev Enforces redemption locks and the central zero-reserve rule for every transfer path.
     ///      Mint and burn remain exempt. The rule applies only to a token that owes reserve under
-    ///      the current policy and holds none. Such a token may enter a trusted escrow only when
+    ///      the current policy and holds no reserve asset at all (checked without oracles, so a
+    ///      price outage cannot freeze a funded token). Such a token may enter a trusted escrow only when
     ///      the escrow itself pulls it in, and may leave one only back to the recorded depositor
     ///      unless a sale path funds the reserve first.
     function _update(address to, uint256 tokenId, address auth)
@@ -209,7 +210,7 @@ contract DGENFT is
             if (address(reserveManager) == address(0)) revert ReserveGuardNotConfigured();
 
             uint256 gemId = tokenGem[tokenId];
-            if (reserveManager.reserveBalanceUsd(gemId) == 0 && _owesReserve(gemId)) {
+            if (!reserveManager.hasReserveAssets(gemId) && _owesReserve(gemId)) {
                 bool escrowReturn = trustedEscrow[previousOwner] && auth == previousOwner
                     && escrowDepositor[tokenId] == to && to != previousOwner;
                 // Marketplace listing pulls the token in, and its buy, offer and auction paths fund
