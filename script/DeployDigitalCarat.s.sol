@@ -17,8 +17,6 @@ import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 
 contract DeployDigitalCarat is Script {
-    uint256 private constant MAX_ROYALTY_BPS = 1_000;
-
     struct Deployment {
         DGENFT nft;
         GemRegistry registry;
@@ -300,12 +298,12 @@ contract DeployDigitalCarat is Script {
         if (bytes(uri).length != 0) nft.setContractURI(uri);
 
         uint256 royaltyBps = vm.envOr("ROYALTY_BPS", uint256(0));
-        require(royaltyBps <= MAX_ROYALTY_BPS, "ROYALTY_BPS above 10%");
+        require(royaltyBps <= nft.MAX_ROYALTY_BPS(), "ROYALTY_BPS above 10%");
         if (royaltyBps != 0) {
             address receiver = vm.envAddress("ROYALTY_RECEIVER");
             require(receiver != address(0), "ROYALTY_RECEIVER missing");
             if (productionDeployment) require(receiver != admin, "ROYALTY_RECEIVER must not be the deployer");
-            // casting to uint96 is safe because the value is capped at MAX_ROYALTY_BPS above.
+            // casting to uint96 is safe because the value is capped at DGENFT.MAX_ROYALTY_BPS above.
             // forge-lint: disable-next-line(unsafe-typecast)
             nft.setDefaultRoyalty(receiver, uint96(royaltyBps));
         }

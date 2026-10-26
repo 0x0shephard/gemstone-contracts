@@ -236,4 +236,16 @@ contract L2PriceSafetyTest is BaseTest {
         assertEq(reserveManager.totalProjectedLiabilitiesUsd(), 0);
         reserveManager.requireSolvent();
     }
+
+    function testRedemptionRequestReportsTheOutageWhenAReserveIsOwed() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://outage-redemption");
+        _setTwoTierReservePolicy();
+        reserveManager.setGlobalSolvencyCheckEnabled(false);
+        _enableSequencerCheck();
+        _sequencer(1, block.timestamp);
+
+        vm.prank(buyer);
+        vm.expectRevert(PaymentTokenRegistry.SequencerDown.selector);
+        redemption.requestRedemption(tokenId, keccak256("pickup"), keccak256("outage-workflow"));
+    }
 }

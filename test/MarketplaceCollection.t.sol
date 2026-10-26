@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IERC2981} from "@openzeppelin/contracts/interfaces/IERC2981.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {DGENFT} from "../src/DGENFT.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 import {BaseTest} from "./BaseTest.t.sol";
@@ -70,5 +71,61 @@ contract MarketplaceCollectionTest is BaseTest {
         assertTrue(nft.trustedEscrow(address(marketplace)));
         assertEq(nft.owner(), address(0));
         assertEq(nft.contractURI(), "");
+    }
+
+    function testRoyaltyIsCappedOnChain() public {
+        nft.setDefaultRoyalty(platform, 1_000);
+        vm.expectRevert(abi.encodeWithSelector(DGENFT.RoyaltyTooHigh.selector, uint96(1_001), uint96(1_000)));
+        nft.setDefaultRoyalty(platform, 1_001);
+    }
+
+    function testUnchangedCollectionOwnerEmitsNothing() public {
+        nft.setCollectionOwner(seller);
+        vm.recordLogs();
+        nft.setCollectionOwner(seller);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 0);
+    }
+
+    /// @dev An outside marketplace (Seaport) moves the token through an approved conduit,
+    ///      straight from seller to buyer.
+    function _conduitSale(uint256 tokenId, address from, address to) private {
+        address conduit = address(0xC0D1);
+        vm.prank(from);
+        nft.setApprovalForAll(conduit, true);
+        vm.prank(conduit);
+        nft.transferFrom(from, to, tokenId);
+    }
+
+    function testOutsideMarketplaceSaleOfAnUnreservedTokenLeavesEscrowBookkeepingAlone() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://conduit-free");
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+
+        _conduitSale(tokenId, buyer, bidder);
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(nft.escrowDepositor(tokenId), address(0));
+    }
+
+    function testOutsideMarketplaceCannotSellALockedOrUnfundedOwingToken() public {
+        uint256 gemId = _listedGem(1_000e18, "ipfs://conduit-owing");
+        vm.prank(buyer);
+        uint256 tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
+        _setTwoTierReservePolicy();
+
+        address conduit = address(0xC0D1);
+        vm.prank(buyer);
+        nft.setApprovalForAll(conduit, true);
+        vm.prank(conduit);
+        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        nft.transferFrom(buyer, bidder, tokenId);
+
+        vm.prank(buyer);
+        reserveManager.fundNative{value: 1}(gemId);
+        vm.prank(address(redemption));
+        nft.setTransferLocked(tokenId, true);
+        vm.prank(conduit);
+        vm.expectRevert(DGENFT.TokenLocked.selector);
+        nft.transferFrom(buyer, bidder, tokenId);
     }
 }

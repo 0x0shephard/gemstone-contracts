@@ -82,6 +82,14 @@ contract DeployDigitalCaratScriptTest is Test {
         vm.stopBroadcast();
         vm.setEnv("PAYMENT_TOKEN_STALE_AFTERS", "90000");
 
+        // Production refuses the deployer as collection owner or royalty receiver.
+        address deployer = vm.addr(DEPLOYER_KEY);
+        _expectDeployRevert("COLLECTION_OWNER", vm.toString(deployer), "COLLECTION_OWNER must not be the deployer");
+        vm.setEnv("COLLECTION_OWNER", vm.toString(address(0x8001)));
+        _expectDeployRevert("ROYALTY_RECEIVER", vm.toString(deployer), "ROYALTY_RECEIVER must not be the deployer");
+        _expectDeployRevert("ROYALTY_RECEIVER", vm.toString(address(0)), "ROYALTY_RECEIVER missing");
+        vm.setEnv("ROYALTY_RECEIVER", vm.toString(address(0x8002)));
+
         // Royalties are capped at 10%.
         vm.setEnv("ROYALTY_BPS", "1001");
         DeployDigitalCarat greedy = new DeployDigitalCarat();
@@ -119,5 +127,13 @@ contract DeployDigitalCaratScriptTest is Test {
         // The reserve-free policy charges nothing.
         assertEq(deployment.reserveManager.reserveBpsFor(500e18), 0);
         assertEq(deployment.reserveManager.reserveBpsFor(5_000e18), 0);
+    }
+
+    function _expectDeployRevert(string memory name, string memory value, string memory reason) private {
+        vm.setEnv(name, value);
+        DeployDigitalCarat script = new DeployDigitalCarat();
+        vm.expectRevert(bytes(reason));
+        script.run();
+        vm.stopBroadcast(); // a reverted run leaves its broadcast open
     }
 }

@@ -35,6 +35,8 @@ contract DGENFT is
     string private _contractURI;
 
     uint256 public constant MAX_LEGACY_ESCROW_MIGRATIONS = 100;
+    /// @notice Highest ERC-2981 royalty, in basis points of the sale price (10%).
+    uint96 public constant MAX_ROYALTY_BPS = 1_000;
 
     event DgeMinted(uint256 indexed tokenId, uint256 indexed gemId, address indexed to, string uri);
     event TransferLockUpdated(uint256 indexed tokenId, bool locked);
@@ -55,6 +57,7 @@ contract DGENFT is
     error ZeroReserveTransfer();
     error InvalidEscrowConfiguration();
     error LegacyMigrationLimitExceeded();
+    error RoyaltyTooHigh(uint96 feeNumerator, uint96 maximum);
     error IncompleteLegacyEscrowMigration(address escrow, uint256 currentBalance, uint256 migratedBalance);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -192,6 +195,9 @@ contract DGENFT is
     /// @param receiver Royalty receiver.
     /// @param feeNumerator Royalty fee numerator using OpenZeppelin's royalty denominator.
     function setDefaultRoyalty(address receiver, uint96 feeNumerator) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        // Capped on-chain so a mistaken or compromised admin cannot route most of an outside sale
+        // to the royalty receiver.
+        if (feeNumerator > MAX_ROYALTY_BPS) revert RoyaltyTooHigh(feeNumerator, MAX_ROYALTY_BPS);
         _setDefaultRoyalty(receiver, feeNumerator);
     }
 
@@ -260,6 +266,7 @@ contract DGENFT is
     ///         account edit the collection page and, off-chain, its payout settings.
     /// @param newOwner New collection owner, or address(0) to leave the collection unclaimed.
     function setCollectionOwner(address newOwner) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newOwner == _collectionOwner) return;
         emit OwnershipTransferred(_collectionOwner, newOwner);
         _collectionOwner = newOwner;
     }
