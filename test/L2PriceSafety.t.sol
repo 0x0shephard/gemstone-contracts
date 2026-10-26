@@ -229,4 +229,11 @@ contract L2PriceSafetyTest is BaseTest {
         vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
         nft.transferFrom(buyer, bidder, tokenId);
     }
+
+    function testSolvencyCheckIgnoresAnOutageWhenNothingIsOwed() public {
+        _enableSequencerCheck();
+        _sequencer(1, block.timestamp);
+        assertEq(reserveManager.totalProjectedLiabilitiesUsd(), 0);
+        reserveManager.requireSolvent();
+    }
 }

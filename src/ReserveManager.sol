@@ -448,9 +448,11 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     /// @notice Reverts if aggregate solvency check is enabled and below the configured minimum.
     function requireSolvent() external view {
+        if (!globalSolvencyCheckEnabled) return;
+        // Nothing owed (e.g. a reserve-free launch): coverage is unbounded, so an outage is irrelevant.
+        if (totalProjectedLiabilitiesUsd == 0) return;
         // During an L2 outage every reserve values at zero; report the outage, not insolvency.
         paymentRegistry.requireSequencerUp();
-        if (!globalSolvencyCheckEnabled) return;
         uint256 coverage = coverageRatioBps();
         if (coverage < minimumCoverageBps) revert Insolvent(coverage, minimumCoverageBps);
     }
