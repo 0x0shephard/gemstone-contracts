@@ -65,7 +65,7 @@ contract DeployDigitalCaratScriptTest is Test {
         // The sequencer feed is mandatory for a production Arbitrum deployment.
         vm.setEnv("SEQUENCER_UPTIME_FEED", vm.toString(address(0)));
         DeployDigitalCarat missingFeed = new DeployDigitalCarat();
-        vm.expectRevert(bytes("SEQUENCER_UPTIME_FEED required on Arbitrum"));
+        vm.expectRevert(bytes("SEQUENCER_UPTIME_FEED required on this L2"));
         missingFeed.run();
         vm.stopBroadcast(); // a reverted run leaves its broadcast open
         vm.setEnv("SEQUENCER_UPTIME_FEED", vm.toString(address(sequencer)));

@@ -17,8 +17,6 @@ import {Treasury} from "../src/Treasury.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 
 contract DeployDigitalCarat is Script {
-    uint256 private constant ARBITRUM_ONE = 42161;
-
     struct Deployment {
         DGENFT nft;
         GemRegistry registry;
@@ -274,8 +272,8 @@ contract DeployDigitalCarat is Script {
         }
 
         address uptimeFeed = vm.envOr("SEQUENCER_UPTIME_FEED", address(0));
-        if (productionDeployment && block.chainid == ARBITRUM_ONE) {
-            require(uptimeFeed != address(0), "SEQUENCER_UPTIME_FEED required on Arbitrum");
+        if (productionDeployment && _isSequencerL2(block.chainid)) {
+            require(uptimeFeed != address(0), "SEQUENCER_UPTIME_FEED required on this L2");
         }
         if (uptimeFeed != address(0)) {
             uint256 gracePeriod = vm.envOr("SEQUENCER_GRACE_PERIOD", uint256(1 hours));
@@ -284,6 +282,12 @@ contract DeployDigitalCarat is Script {
             // forge-lint: disable-next-line(unsafe-typecast)
             payments.setSequencerUptimeFeed(uptimeFeed, uint48(gracePeriod));
         }
+    }
+
+    /// @dev Rollups with a single sequencer and a Chainlink uptime feed: Arbitrum One and Nova,
+    ///      OP Mainnet, Base.
+    function _isSequencerL2(uint256 chainId) private pure returns (bool) {
+        return chainId == 42161 || chainId == 42170 || chainId == 10 || chainId == 8453;
     }
 
     function _staleAfter(uint256 seconds_) private pure returns (uint48) {

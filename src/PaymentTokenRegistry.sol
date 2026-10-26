@@ -140,10 +140,19 @@ contract PaymentTokenRegistry is Initializable, AccessControlUpgradeable, UUPSUp
             // A wrong address would make every quote revert; reject anything that is not a live feed.
             (, int256 status, uint256 startedAt,,) = AggregatorV3Interface(feed).latestRoundData();
             if ((status != 0 && status != 1) || startedAt == 0) revert InvalidFeed();
+            if (AggregatorV3Interface(feed).decimals() != 0) revert InvalidFeed();
         }
         sequencerUptimeFeed = AggregatorV3Interface(feed);
         sequencerGracePeriod = gracePeriod;
         emit SequencerUptimeFeedSet(feed, gracePeriod);
+    }
+
+    /// @notice Reverts while the configured L2 sequencer is down or inside its grace period.
+    /// @dev For callers that must not mistake an outage for a failed quote or an empty reserve:
+    ///      settlement that would otherwise refund a winning bid, and solvency checks that would
+    ///      otherwise report every reserve as worthless.
+    function requireSequencerUp() external view {
+        _requireSequencerUp();
     }
 
     /// @notice Removes a token from accepted payment assets.
