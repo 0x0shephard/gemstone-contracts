@@ -3,15 +3,30 @@ pragma solidity ^0.8.24;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DGENFT} from "../src/DGENFT.sol";
+import {Marketplace} from "../src/Marketplace.sol";
+import {ReserveManager} from "../src/ReserveManager.sol";
 import {SwapEscrow} from "../src/SwapEscrow.sol";
 import {BaseTest} from "./BaseTest.t.sol";
 
 contract DGENFTReserveGuardTest is BaseTest {
+    /// @dev Mints at the 0% base policy, then turns a reserve rate on, leaving a token that owes
+    ///      reserve and holds none (a stone sold before reserves were activated).
     function _mintAtZero(address owner, string memory uri) private returns (uint256 gemId, uint256 tokenId) {
+        (gemId, tokenId) = _mintUnreserved(owner, uri);
+        _setTwoTierReservePolicy();
+        assertGt(reserveManager.shortfallUsd(gemId, 1_000e18), 0);
+    }
+
+    /// @dev Mints under a 0% policy: nothing is owed and nothing is held.
+    function _mintUnreserved(address owner, string memory uri) private returns (uint256 gemId, uint256 tokenId) {
+        ReserveManager.ReserveBracket[] memory zeroRate = new ReserveManager.ReserveBracket[](1);
+        zeroRate[0] = ReserveManager.ReserveBracket({minPriceUsd: 0, maxPriceUsd: type(uint256).max, reserveBps: 0});
+        reserveManager.setReserveBrackets(zeroRate);
         gemId = _listedGem(1_000e18, uri);
         vm.prank(owner);
         tokenId = sale.buyNow{value: 0.5 ether}(gemId, address(0), 0.5 ether);
         assertEq(reserveManager.reserveBalanceUsd(gemId), 0);
+        assertEq(reserveManager.requiredReserveUsd(gemId, 1_000e18), 0);
     }
 
     function _fundOneWei(uint256 gemId, address funder) private {
@@ -73,14 +88,108 @@ contract DGENFTReserveGuardTest is BaseTest {
         vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
         nft.safeTransferFrom(address(marketplace), stranger, tokenId);
 
-        vm.prank(bidder);
-        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
-        marketplace.buy{value: 0.5 ether}(tokenId, address(0), 0.5 ether);
-
         vm.prank(buyer);
         marketplace.cancel(tokenId);
         assertEq(nft.ownerOf(tokenId), buyer);
         assertEq(nft.escrowDepositor(tokenId), address(0));
+    }
+
+    function testZeroRateLaunchLetsUnreservedTokensMoveFreely() public {
+        (uint256 gemId, uint256 tokenId) = _mintUnreserved(buyer, "ipfs://zero-rate-free");
+
+        vm.prank(buyer);
+        nft.transferFrom(buyer, bidder, tokenId);
+        assertEq(nft.ownerOf(tokenId), bidder);
+
+        // An outside marketplace moves it through an approved operator.
+        vm.prank(bidder);
+        nft.setApprovalForAll(stranger, true);
+        vm.prank(stranger);
+        nft.safeTransferFrom(bidder, buyer, tokenId);
+        assertEq(nft.ownerOf(tokenId), buyer);
+
+        // A gift is a push into the gift escrow, and a claim releases it to someone new.
+        vm.prank(buyer);
+        nft.transferFrom(buyer, giftOperator, tokenId);
+        vm.prank(giftOperator);
+        nft.transferFrom(giftOperator, stranger, tokenId);
+        assertEq(nft.ownerOf(tokenId), stranger);
+        assertEq(reserveManager.reserveBalanceUsd(gemId), 0);
+    }
+
+    function testPerGemMinimumMakesAZeroRateTokenOweReserve() public {
+        (uint256 gemId, uint256 tokenId) = _mintUnreserved(buyer, "ipfs://zero-rate-minimum");
+        reserveManager.setMinimumReserveUsd(gemId, 10e18);
+
+        vm.prank(buyer);
+        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        nft.transferFrom(buyer, bidder, tokenId);
+    }
+
+    function testActivationLetsTheNextMarketplaceBuyerFundTheShortfall() public {
+        (uint256 gemId, uint256 tokenId) = _mintAtZero(buyer, "ipfs://activation-buy");
+        uint256 shortfall = reserveManager.shortfallUsd(gemId, 1_000e18);
+
+        // A push into an escrow stays blocked; only the escrow pulling it in is allowed.
+        vm.prank(buyer);
+        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        nft.transferFrom(buyer, address(marketplace), tokenId);
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_000e18);
+        vm.stopPrank();
+        assertEq(nft.escrowDepositor(tokenId), buyer);
+
+        // Too little to cover the price plus the shortfall.
+        vm.prank(bidder);
+        vm.expectRevert(Marketplace.PriceNotMet.selector);
+        marketplace.buy{value: 0.5 ether}(tokenId, address(0), 0.5 ether);
+
+        vm.prank(bidder);
+        marketplace.buy{value: 0.6 ether}(tokenId, address(0), 0.6 ether);
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertGe(reserveManager.reserveBalanceUsd(gemId), shortfall);
+        assertEq(reserveManager.shortfallUsd(gemId, 1_000e18), 0);
+        assertEq(reserveManager.projectedLiabilityUsd(gemId), shortfall);
+
+        // Funded now, so it moves like any reserved token.
+        vm.prank(bidder);
+        nft.transferFrom(bidder, stranger, tokenId);
+        assertEq(nft.ownerOf(tokenId), stranger);
+    }
+
+    function testActivationLetsAnOfferOnAnUnlistedTokenFundTheShortfall() public {
+        (uint256 gemId, uint256 tokenId) = _mintAtZero(buyer, "ipfs://activation-offer");
+
+        vm.prank(bidder);
+        uint256 offerId = marketplace.createOffer{value: 0.6 ether}(tokenId, address(0), 0.6 ether);
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.acceptOffer(offerId);
+        vm.stopPrank();
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(reserveManager.shortfallUsd(gemId, 1_000e18), 0);
+    }
+
+    function testPulledInZeroReserveTokenCannotLeaveGiftEscrowToSomeoneNew() public {
+        (, uint256 tokenId) = _mintAtZero(buyer, "ipfs://pull-gift");
+
+        // A gift escrow that pulls with approval gets custody, but cannot release to a stranger.
+        vm.prank(buyer);
+        nft.approve(giftOperator, tokenId);
+        vm.prank(giftOperator);
+        nft.transferFrom(buyer, giftOperator, tokenId);
+        assertEq(nft.escrowDepositor(tokenId), buyer);
+
+        vm.prank(giftOperator);
+        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        nft.transferFrom(giftOperator, stranger, tokenId);
+
+        vm.prank(giftOperator);
+        nft.transferFrom(giftOperator, buyer, tokenId);
+        assertEq(nft.ownerOf(tokenId), buyer);
     }
 
     function testSwapAtZeroCanCancelButCannotSettleToAccepter() public {
@@ -99,7 +208,15 @@ contract DGENFTReserveGuardTest is BaseTest {
         _deplete(firstGemId, buyer);
         vm.startPrank(bidder);
         nft.approve(address(swapEscrow), secondTokenId);
-        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        // SwapEscrow refuses an unfunded side itself; DGENFT would refuse the release regardless.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SwapEscrow.ReserveCoverageTooLow.selector,
+                firstGemId,
+                reserveManager.requiredReserveUsd(firstGemId, 1_000e18),
+                0
+            )
+        );
         swapEscrow.acceptOffer(offerId);
         vm.stopPrank();
 
@@ -209,6 +326,68 @@ contract DGENFTReserveGuardTest is BaseTest {
         address[] memory tooManyDepositors = new address[](101);
         vm.expectRevert(DGENFT.LegacyMigrationLimitExceeded.selector);
         legacyProxy.initializeReserveGuard(reserveManager, escrows, tooManyTokenIds, tooManyDepositors);
+    }
+
+    function testActivationLetsAListingAuctionSettlementFundTheShortfall() public {
+        (uint256 gemId, uint256 tokenId) = _mintAtZero(buyer, "ipfs://activation-auction");
+
+        vm.startPrank(buyer);
+        nft.approve(address(marketplace), tokenId);
+        marketplace.list(tokenId, 1_000e18);
+        vm.stopPrank();
+
+        vm.prank(bidder);
+        marketplace.createOffer{value: 0.6 ether}(tokenId, address(0), 0.6 ether);
+        vm.warp(block.timestamp + marketplace.OFFER_DURATION());
+        ethFeed.updateAnswer(2_000e8);
+        assertTrue(marketplace.settleListingAuction(tokenId));
+
+        assertEq(nft.ownerOf(tokenId), bidder);
+        assertEq(reserveManager.shortfallUsd(gemId, 1_000e18), 0);
+    }
+
+    function testPhaseOneGiftHeldAtActivationCanOnlyReturnUntilFunded() public {
+        (uint256 gemId, uint256 tokenId) = _mintUnreserved(buyer, "ipfs://phase-one-gift");
+        vm.prank(buyer);
+        nft.transferFrom(buyer, giftOperator, tokenId);
+        _setTwoTierReservePolicy();
+
+        vm.prank(giftOperator);
+        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        nft.transferFrom(giftOperator, stranger, tokenId);
+
+        // Escrow to escrow is never a pull from an owner, so it stays blocked.
+        vm.prank(giftOperator);
+        nft.approve(address(marketplace), tokenId);
+        vm.prank(giftOperator);
+        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        marketplace.list(tokenId, 1_000e18);
+
+        // Anyone may fund the reserve, which unblocks delivery.
+        _fundOneWei(gemId, stranger);
+        vm.prank(giftOperator);
+        nft.transferFrom(giftOperator, stranger, tokenId);
+        assertEq(nft.ownerOf(tokenId), stranger);
+    }
+
+    function testUnpricedGemStillOwesReserveWhileARateIsInForce() public {
+        _setTwoTierReservePolicy();
+        registry.setSellerApproval(seller, true);
+        uint256 gemId = registry.registerGem(seller, custodian, "ipfs://unpriced", keccak256("ipfs://unpriced"));
+        uint256 tokenId = nft.mintTo(buyer, gemId, "ipfs://unpriced");
+        assertEq(registry.getGem(gemId).priceUsd, 0);
+
+        vm.prank(buyer);
+        vm.expectRevert(DGENFT.ZeroReserveTransfer.selector);
+        nft.transferFrom(buyer, bidder, tokenId);
+
+        // At a 0% policy it moves.
+        ReserveManager.ReserveBracket[] memory zeroRate = new ReserveManager.ReserveBracket[](1);
+        zeroRate[0] = ReserveManager.ReserveBracket({minPriceUsd: 0, maxPriceUsd: type(uint256).max, reserveBps: 0});
+        reserveManager.setReserveBrackets(zeroRate);
+        vm.prank(buyer);
+        nft.transferFrom(buyer, bidder, tokenId);
+        assertEq(nft.ownerOf(tokenId), bidder);
     }
 
     function testSelfOwnedSwapIsRejected() public {

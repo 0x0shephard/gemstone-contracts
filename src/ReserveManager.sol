@@ -397,6 +397,20 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         emit ReserveClaimed(msg.sender, recipient, asset, amount);
     }
 
+    /// @notice Returns whether any reserve asset is held for a gem, without consulting oracles.
+    /// @dev DGENFT's transfer guard uses this, so a stale feed or an L2 sequencer outage that
+    ///      zeroes `reserveBalanceUsd` does not freeze tokens that hold a reserve. A balance in an
+    ///      asset later disabled or removed from the payment registry still counts here, though
+    ///      oracle-valued checks (swaps, redemption) value it at zero.
+    /// @param gemId Gem id to check.
+    function hasReserveAssets(uint256 gemId) external view returns (bool) {
+        address[] storage assets = _reserveAssets[gemId];
+        for (uint256 i = 0; i < assets.length; i++) {
+            if (reserveAssetBalance[gemId][assets[i]] != 0) return true;
+        }
+        return false;
+    }
+
     /// @notice Returns the current oracle-valued reserve balance for a gem.
     /// @dev Assets whose quote is unavailable are conservatively valued at zero.
     function reserveBalanceUsd(uint256 gemId) public view returns (uint256 usdValue) {
@@ -435,6 +449,10 @@ contract ReserveManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     /// @notice Reverts if aggregate solvency check is enabled and below the configured minimum.
     function requireSolvent() external view {
         if (!globalSolvencyCheckEnabled) return;
+        // Nothing owed (e.g. a reserve-free launch): coverage is unbounded, so an outage is irrelevant.
+        if (totalProjectedLiabilitiesUsd == 0) return;
+        // During an L2 outage every reserve values at zero; report the outage, not insolvency.
+        paymentRegistry.requireSequencerUp();
         uint256 coverage = coverageRatioBps();
         if (coverage < minimumCoverageBps) revert Insolvent(coverage, minimumCoverageBps);
     }

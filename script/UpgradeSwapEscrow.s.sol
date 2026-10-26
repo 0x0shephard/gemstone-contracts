@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {UpgradePreflight} from "./UpgradePreflight.sol";
 import {SwapEscrow} from "../src/SwapEscrow.sol";
 
 /// @notice Upgrades the existing Sepolia UUPS proxy without changing its address or storage.
@@ -11,6 +12,7 @@ contract UpgradeSwapEscrow is Script {
         uint256 adminKey = vm.envUint("PRIVATE_KEY");
         require(block.chainid == vm.envUint("EXPECTED_CHAIN_ID"), "RPC chain does not match EXPECTED_CHAIN_ID");
         address proxy = vm.envAddress("SWAP_ESCROW_ADDRESS");
+        UpgradePreflight.requireSequencerAwareRegistry(address(SwapEscrow(payable(proxy)).paymentRegistry()));
 
         vm.startBroadcast(adminKey);
         implementation = address(new SwapEscrow());

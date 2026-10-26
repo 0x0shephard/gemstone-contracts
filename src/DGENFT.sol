@@ -30,8 +30,13 @@ contract DGENFT is
     ReserveManager public reserveManager;
     mapping(address escrow => bool trusted) public trustedEscrow;
     mapping(uint256 tokenId => address depositor) public escrowDepositor;
+    // Appended for outside marketplaces (OpenSea and others). Do not reorder these fields.
+    address private _collectionOwner;
+    string private _contractURI;
 
     uint256 public constant MAX_LEGACY_ESCROW_MIGRATIONS = 100;
+    /// @notice Highest ERC-2981 royalty, in basis points of the sale price (10%).
+    uint96 public constant MAX_ROYALTY_BPS = 1_000;
 
     event DgeMinted(uint256 indexed tokenId, uint256 indexed gemId, address indexed to, string uri);
     event TransferLockUpdated(uint256 indexed tokenId, bool locked);
@@ -40,6 +45,10 @@ contract DGENFT is
     event EscrowDepositRecorded(uint256 indexed tokenId, address indexed escrow, address indexed depositor);
     event EscrowDepositCleared(uint256 indexed tokenId, address indexed escrow, address indexed recipient);
     event LegacyEscrowDepositBootstrapped(uint256 indexed tokenId, address indexed escrow, address indexed depositor);
+    /// @dev Same signature as OpenZeppelin `Ownable`, which marketplaces index to find the collection owner.
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    /// @dev ERC-7572: tells marketplaces to re-read `contractURI`.
+    event ContractURIUpdated();
 
     error InvalidAddress();
     error GemAlreadyMinted();
@@ -48,6 +57,7 @@ contract DGENFT is
     error ZeroReserveTransfer();
     error InvalidEscrowConfiguration();
     error LegacyMigrationLimitExceeded();
+    error RoyaltyTooHigh(uint96 feeNumerator, uint96 maximum);
     error IncompleteLegacyEscrowMigration(address escrow, uint256 currentBalance, uint256 migratedBalance);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -185,6 +195,9 @@ contract DGENFT is
     /// @param receiver Royalty receiver.
     /// @param feeNumerator Royalty fee numerator using OpenZeppelin's royalty denominator.
     function setDefaultRoyalty(address receiver, uint96 feeNumerator) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        // Capped on-chain so a mistaken or compromised admin cannot route most of an outside sale
+        // to the royalty receiver.
+        if (feeNumerator > MAX_ROYALTY_BPS) revert RoyaltyTooHigh(feeNumerator, MAX_ROYALTY_BPS);
         _setDefaultRoyalty(receiver, feeNumerator);
     }
 
@@ -194,8 +207,11 @@ contract DGENFT is
     }
 
     /// @dev Enforces redemption locks and the central zero-reserve rule for every transfer path.
-    ///      Mint and burn remain exempt. At zero reserve, a trusted escrow may only return the
-    ///      token itself to the depositor recorded when custody began.
+    ///      Mint and burn remain exempt. The rule applies only to a token that owes reserve under
+    ///      the current policy and holds no reserve asset at all (checked without oracles, so a
+    ///      price outage cannot freeze a funded token). Such a token may enter a trusted escrow only when
+    ///      the escrow itself pulls it in, and may leave one only back to the recorded depositor
+    ///      unless a sale path funds the reserve first.
     function _update(address to, uint256 tokenId, address auth)
         internal
         override(ERC721Upgradeable)
@@ -207,10 +223,13 @@ contract DGENFT is
             if (address(reserveManager) == address(0)) revert ReserveGuardNotConfigured();
 
             uint256 gemId = tokenGem[tokenId];
-            if (reserveManager.reserveBalanceUsd(gemId) == 0) {
+            if (!reserveManager.hasReserveAssets(gemId) && _owesReserve(gemId)) {
                 bool escrowReturn = trustedEscrow[previousOwner] && auth == previousOwner
                     && escrowDepositor[tokenId] == to && to != previousOwner;
-                if (!escrowReturn) revert ZeroReserveTransfer();
+                // Marketplace listing pulls the token in, and its buy, offer and auction paths fund
+                // the shortfall before releasing it. A push (owner sends to an escrow) stays blocked.
+                bool escrowPull = trustedEscrow[to] && auth == to && !trustedEscrow[previousOwner];
+                if (!escrowReturn && !escrowPull) revert ZeroReserveTransfer();
             }
 
             if (to != previousOwner) {
@@ -224,6 +243,44 @@ contract DGENFT is
             }
         }
         return super._update(to, tokenId, auth);
+    }
+
+    /// @dev True when the reserve policy charges this gem anything: a rate at its registry price,
+    ///      or a per-gem minimum. At a 0% rate with no minimum nothing is owed, so the token moves
+    ///      freely. The rate is checked rather than the computed amount, so a gem with no registry
+    ///      price (never listed) still counts as owing while a rate is in force.
+    function _owesReserve(uint256 gemId) private view returns (bool) {
+        if (reserveManager.minimumReserveUsd(gemId) != 0) return true;
+        uint256 priceUsd = reserveManager.registry().getGem(gemId).priceUsd;
+        return reserveManager.reserveBpsFor(priceUsd) != 0;
+    }
+
+    /// @notice The collection owner marketplaces show and let edit the collection page (OpenSea
+    ///         reads `owner()`). Display only: it grants no permission in this contract, where
+    ///         every power stays with AccessControl roles.
+    function owner() external view returns (address) {
+        return _collectionOwner;
+    }
+
+    /// @notice Sets the marketplace-facing collection owner. Use a Safe: marketplaces let this
+    ///         account edit the collection page and, off-chain, its payout settings.
+    /// @param newOwner New collection owner, or address(0) to leave the collection unclaimed.
+    function setCollectionOwner(address newOwner) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newOwner == _collectionOwner) return;
+        emit OwnershipTransferred(_collectionOwner, newOwner);
+        _collectionOwner = newOwner;
+    }
+
+    /// @notice ERC-7572 collection metadata URI (name, description, image, external link).
+    function contractURI() external view returns (string memory) {
+        return _contractURI;
+    }
+
+    /// @notice Sets the ERC-7572 collection metadata URI.
+    /// @param uri JSON metadata URI, or empty to clear it.
+    function setContractURI(string calldata uri) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _contractURI = uri;
+        emit ContractURIUpdated();
     }
 
     function _addTrustedEscrow(address escrow) private {

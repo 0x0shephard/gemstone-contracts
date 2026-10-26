@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {UpgradePreflight} from "./UpgradePreflight.sol";
 import {RedemptionManager} from "../src/RedemptionManager.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 
@@ -17,6 +18,7 @@ contract UpgradeRedemptionManager is Script {
         uint64 recoveryDelay;
         address deployer;
         address[4] wiringBefore;
+        bool alreadyV2;
     }
 
     function run() external returns (address implementation) {
@@ -24,16 +26,21 @@ contract UpgradeRedemptionManager is Script {
         require(block.chainid == vm.envUint("EXPECTED_CHAIN_ID"), "RPC chain does not match EXPECTED_CHAIN_ID");
         UpgradeConfig memory config;
         config.proxy = vm.envAddress("REDEMPTION_MANAGER_ADDRESS");
-        config.proofApprover = vm.envAddress("REDEMPTION_PROOF_APPROVER");
-        config.authorizer = vm.envAddress("REDEMPTION_AUTHORIZER");
-        address[] memory noRecoveryApprovers;
-        config.recoveryApprovers = vm.envOr("REDEMPTION_RECOVERY_APPROVERS", ",", noRecoveryApprovers);
-        uint256 recoveryThresholdValue = vm.envOr("REDEMPTION_RECOVERY_THRESHOLD", uint256(2));
-        uint256 recoveryDelayValue = vm.envOr("REDEMPTION_RECOVERY_DELAY", uint256(7 days));
-        require(recoveryThresholdValue <= type(uint8).max, "Recovery threshold too high");
-        require(recoveryDelayValue <= type(uint64).max, "Recovery delay too high");
-        config.recoveryThreshold = uint8(recoveryThresholdValue);
-        config.recoveryDelay = uint64(recoveryDelayValue);
+        // A proxy already on V2 (Sepolia) gets a plain upgrade: its signers and recovery policy are
+        // set and stay as they are, and initializeV2 can run only once.
+        config.alreadyV2 = RedemptionManager(config.proxy).redemptionV2Initialized();
+        if (!config.alreadyV2) {
+            config.proofApprover = vm.envAddress("REDEMPTION_PROOF_APPROVER");
+            config.authorizer = vm.envAddress("REDEMPTION_AUTHORIZER");
+            address[] memory noRecoveryApprovers;
+            config.recoveryApprovers = vm.envOr("REDEMPTION_RECOVERY_APPROVERS", ",", noRecoveryApprovers);
+            uint256 recoveryThresholdValue = vm.envOr("REDEMPTION_RECOVERY_THRESHOLD", uint256(2));
+            uint256 recoveryDelayValue = vm.envOr("REDEMPTION_RECOVERY_DELAY", uint256(7 days));
+            require(recoveryThresholdValue <= type(uint8).max, "Recovery threshold too high");
+            require(recoveryDelayValue <= type(uint64).max, "Recovery delay too high");
+            config.recoveryThreshold = uint8(recoveryThresholdValue);
+            config.recoveryDelay = uint64(recoveryDelayValue);
+        }
         config.deployer = vm.addr(deployerKey);
         RedemptionManager current = RedemptionManager(config.proxy);
         require(current.hasRole(current.DEFAULT_ADMIN_ROLE(), config.deployer), "Deployer is not redemption admin");
@@ -49,22 +56,25 @@ contract UpgradeRedemptionManager is Script {
                 && config.wiringBefore[2] != address(0) && config.wiringBefore[3] != address(0),
             "Invalid redemption proxy wiring"
         );
+        UpgradePreflight.requireSequencerAwareRegistry(address(current.reserveManager().paymentRegistry()));
 
         vm.startBroadcast(deployerKey);
         implementation = address(new RedemptionManager());
         RedemptionManager(config.proxy)
             .upgradeToAndCall(
                 implementation,
-                abi.encodeCall(
-                    RedemptionManager.initializeV2,
-                    (
-                        config.proofApprover,
-                        config.authorizer,
-                        config.recoveryApprovers,
-                        config.recoveryThreshold,
-                        config.recoveryDelay
+                config.alreadyV2
+                    ? bytes("")
+                    : abi.encodeCall(
+                        RedemptionManager.initializeV2,
+                        (
+                            config.proofApprover,
+                            config.authorizer,
+                            config.recoveryApprovers,
+                            config.recoveryThreshold,
+                            config.recoveryDelay
+                        )
                     )
-                )
             );
         vm.stopBroadcast();
 
@@ -83,6 +93,7 @@ contract UpgradeRedemptionManager is Script {
         require(address(upgraded.complianceRegistry()) == config.wiringBefore[3], "Compliance registry wiring changed");
         require(upgraded.hasRole(upgraded.DEFAULT_ADMIN_ROLE(), config.deployer), "Redemption admin role changed");
         require(upgraded.hasRole(Roles.UPGRADER_ROLE, config.deployer), "Redemption upgrader role changed");
+        if (config.alreadyV2) return;
         require(upgraded.hasRole(Roles.PROOF_APPROVER_ROLE, config.proofApprover), "Proof approver not configured");
         require(upgraded.hasRole(Roles.AUTHORIZER_ROLE, config.authorizer), "Authorizer not configured");
         for (uint256 i = 0; i < config.recoveryApprovers.length; ++i) {

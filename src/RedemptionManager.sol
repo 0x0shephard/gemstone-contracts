@@ -228,6 +228,8 @@ contract RedemptionManager is
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         reserveManager.requireSolvent();
         uint256 requiredUsd = reserveManager.requiredReserveUsd(gemId, gem.priceUsd);
+        // During an L2 outage the reserve values at zero; report the outage, not a low reserve.
+        if (requiredUsd != 0) reserveManager.paymentRegistry().requireSequencerUp();
         uint256 balanceUsd = reserveManager.reserveBalanceUsd(gemId);
         if (balanceUsd * 10_000 < requiredUsd * MIN_REDEMPTION_RESERVE_BPS) {
             revert RedemptionReserveTooLow(requiredUsd, balanceUsd);

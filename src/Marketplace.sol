@@ -403,6 +403,9 @@ contract Marketplace is
         uint64 endTime = listingAuctionEnd[tokenId];
         if (block.timestamp < endTime) revert AuctionNotEnded();
 
+        // An L2 outage makes the settlement quote fail, which would refund the winner and void the
+        // sale. Revert instead, so settlement is retried once prices are trusted again.
+        paymentRegistry.requireSequencerUp();
         return _finalizeListingAuction(tokenId, offerId);
     }
 

@@ -304,6 +304,9 @@ contract PrimarySaleAuction is
             return 0;
         }
 
+        // An L2 outage makes the quote below fail, which would refund the winner. Revert instead,
+        // so settlement is retried once prices are trusted again.
+        paymentRegistry.requireSequencerUp();
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         uint256 currentReserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         uint256 requiredUsd = auction.usdValue + currentReserveUsd;
