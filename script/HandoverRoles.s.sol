@@ -16,6 +16,11 @@ import {Roles} from "../src/libraries/Roles.sol";
 ///         `NEW_ADMIN` holds every one of them, then drops them from the deployer, admin last on each
 ///         contract. After it, the deployer key can do nothing; the Safe grants operational roles
 ///         (lister, custodian, verifier, ...) to the wallets that need them.
+///
+///         When the deployer is also the operator, `KEEP_ROLES` lists the operational roles it keeps,
+///         as `CONTRACT_ENV:ROLE_NAME` pairs (e.g. `GEM_REGISTRY_ADDRESS:LISTER_ROLE`). Only the six
+///         roles in `_keepable()` qualify: no admin, upgrader, recovery approval, or role that moves
+///         funds, so the deployer still loses every power over the contracts and their money.
 /// @dev Env: PRIVATE_KEY (deployer), NEW_ADMIN, EXPECTED_CHAIN_ID, and the proxy addresses
 ///      DGE_NFT_ADDRESS, GEM_REGISTRY_ADDRESS, PAYMENT_TOKEN_REGISTRY_ADDRESS,
 ///      RESERVE_MANAGER_ADDRESS, COMPLIANCE_REGISTRY_ADDRESS, TREASURY_ADDRESS,
@@ -86,7 +91,7 @@ contract HandoverRoles is Script {
             IAccessControl target = IAccessControl(vm.envAddress(CONTRACT_ENVS[c]));
             // roles[0] is the admin role; renounce it last so nothing is left ungoverned midway.
             for (uint256 r = roles.length; r > 0; r--) {
-                if (target.hasRole(roles[r - 1], deployer)) {
+                if (target.hasRole(roles[r - 1], deployer) && !_kept(CONTRACT_ENVS[c], roles[r - 1])) {
                     target.renounceRole(roles[r - 1], deployer);
                     console2.log(CONTRACT_ENVS[c], _roleName(roles[r - 1]), "renounced");
                 }
@@ -97,8 +102,49 @@ contract HandoverRoles is Script {
         for (uint256 c = 0; c < CONTRACT_ENVS.length; c++) {
             IAccessControl target = IAccessControl(vm.envAddress(CONTRACT_ENVS[c]));
             for (uint256 r = 0; r < roles.length; r++) {
+                if (_kept(CONTRACT_ENVS[c], roles[r])) continue;
                 require(!target.hasRole(roles[r], deployer), "deployer still holds a role");
             }
+        }
+    }
+
+    /// @dev Whether `KEEP_ROLES` lets the deployer keep `role` on the contract named `contractEnv`.
+    function _kept(string memory contractEnv, bytes32 role) private view returns (bool) {
+        string[] memory none;
+        string[] memory keep = vm.envOr("KEEP_ROLES", ",", none);
+        bytes32 entry = keccak256(bytes(string.concat(contractEnv, ":", _roleName(role))));
+        for (uint256 i = 0; i < keep.length; i++) {
+            if (keccak256(bytes(keep[i])) == entry) return true;
+        }
+        return false;
+    }
+
+    /// @dev The only roles a single deployer/operator wallet may keep: what the edge functions call.
+    ///      Nothing that moves funds (reserve operator, settler, minter, burner, locker, redeemer),
+    ///      grants power, or approves a recovery burn.
+    function _keepable() private pure returns (string[6] memory) {
+        return [
+            "GEM_REGISTRY_ADDRESS:LISTER_ROLE",
+            "GEM_REGISTRY_ADDRESS:CUSTODIAN_ROLE",
+            "GEM_REGISTRY_ADDRESS:VERIFIER_ROLE",
+            "GEM_REGISTRY_ADDRESS:COMPLIANCE_ROLE",
+            "PRIMARY_SALE_AUCTION_ADDRESS:LISTER_ROLE",
+            "REDEMPTION_MANAGER_ADDRESS:PROOF_APPROVER_ROLE"
+        ];
+    }
+
+    /// @dev Every `KEEP_ROLES` entry must be one of `_keepable()`, checked before anything is sent.
+    function _checkKeepList() private view {
+        string[] memory none;
+        string[] memory keep = vm.envOr("KEEP_ROLES", ",", none);
+        string[6] memory keepable = _keepable();
+        for (uint256 i = 0; i < keep.length; i++) {
+            if (bytes(keep[i]).length == 0) continue;
+            bool allowed;
+            for (uint256 k = 0; k < keepable.length && !allowed; k++) {
+                allowed = keccak256(bytes(keep[i])) == keccak256(bytes(keepable[k]));
+            }
+            require(allowed, string.concat("KEEP_ROLES cannot keep ", keep[i]));
         }
     }
 
@@ -111,6 +157,7 @@ contract HandoverRoles is Script {
         require(
             newAdmin.code.length != 0 || vm.envOr("ALLOW_EOA_ADMIN", false), "NEW_ADMIN has no code; expected a Safe"
         );
+        _checkKeepList();
     }
 
     function _roles() private pure returns (bytes32[] memory roles) {
