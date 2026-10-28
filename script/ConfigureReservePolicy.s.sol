@@ -15,6 +15,13 @@ contract ConfigureReservePolicy is Script {
         uint256[] memory bracketBps = vm.envUint("RESERVE_BRACKET_BPS", ",");
 
         require(defaultReserveBps <= 10_000, "DEFAULT_RESERVE_BPS too high");
+        // Optional; unset leaves the floor as it is. Set it before turning reserves on: at the
+        // 100% default a small fall in the reserve's ETH price halts every purchase.
+        uint256 minimumCoverageBps = vm.envOr("MINIMUM_COVERAGE_BPS", uint256(0));
+        require(
+            minimumCoverageBps == 0 || (minimumCoverageBps >= 9_000 && minimumCoverageBps <= 10_000),
+            "MINIMUM_COVERAGE_BPS out of range"
+        );
         require(bracketMaxUsd.length == bracketBps.length && bracketMaxUsd.length != 0, "Invalid reserve brackets");
 
         ReserveManager.ReserveBracket[] memory brackets = new ReserveManager.ReserveBracket[](bracketMaxUsd.length);
@@ -33,9 +40,12 @@ contract ConfigureReservePolicy is Script {
         // forge-lint: disable-next-line(unsafe-typecast)
         reserveManager.setDefaultReserveBps(uint16(defaultReserveBps));
         reserveManager.setReserveBrackets(brackets);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (minimumCoverageBps != 0) reserveManager.setMinimumCoverageBps(uint16(minimumCoverageBps));
         vm.stopBroadcast();
 
         console2.log("ReserveManager", address(reserveManager));
         console2.log("Reserve brackets", brackets.length);
+        console2.log("Minimum coverage bps", reserveManager.minimumCoverageBps());
     }
 }

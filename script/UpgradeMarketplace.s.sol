@@ -12,6 +12,11 @@ contract UpgradeMarketplace is Script {
         uint256 adminKey = vm.envUint("PRIVATE_KEY");
         address proxy = vm.envAddress("MARKETPLACE_ADDRESS");
         UpgradePreflight.requireSequencerAwareRegistry(address(Marketplace(payable(proxy)).paymentRegistry()));
+        // The new cap is enforced only when the fee is next set, so check the stored value now.
+        require(
+            Marketplace(payable(proxy)).secondaryFeeBps() <= 1_000,
+            "secondaryFeeBps above the new 10% cap; lower it first"
+        );
 
         vm.startBroadcast(adminKey);
         implementation = address(new Marketplace());
