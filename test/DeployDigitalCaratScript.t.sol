@@ -213,6 +213,19 @@ contract DeployDigitalCaratScriptTest is Test {
         vm.setEnv("KEEP_ROLES", "GEM_REGISTRY_ADDRESS:UPGRADER_ROLE");
         vm.expectRevert(bytes("KEEP_ROLES cannot keep GEM_REGISTRY_ADDRESS:UPGRADER_ROLE"));
         handover.renounce();
+        // Nor anything that moves funds or approves a recovery burn, nor an unknown or miscased name.
+        string[5] memory refused = [
+            "RESERVE_MANAGER_ADDRESS:RESERVE_OPERATOR_ROLE",
+            "TREASURY_ADDRESS:SETTLER_ROLE",
+            "REDEMPTION_MANAGER_ADDRESS:RECOVERY_APPROVER_ROLE",
+            "gem_registry_address:lister_role",
+            "FOO_ADDRESS:LISTER_ROLE"
+        ];
+        for (uint256 i = 0; i < refused.length; i++) {
+            vm.setEnv("KEEP_ROLES", refused[i]);
+            vm.expectRevert(bytes(string.concat("KEEP_ROLES cannot keep ", refused[i])));
+            handover.grant();
+        }
         // A trailing comma (an empty entry) is ignored.
         vm.setEnv("KEEP_ROLES", "GEM_REGISTRY_ADDRESS:LISTER_ROLE,PRIMARY_SALE_AUCTION_ADDRESS:LISTER_ROLE,");
 

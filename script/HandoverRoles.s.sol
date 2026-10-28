@@ -18,9 +18,9 @@ import {Roles} from "../src/libraries/Roles.sol";
 ///         (lister, custodian, verifier, ...) to the wallets that need them.
 ///
 ///         When the deployer is also the operator, `KEEP_ROLES` lists the operational roles it keeps,
-///         as `CONTRACT_ENV:ROLE_NAME` pairs (e.g. `GEM_REGISTRY_ADDRESS:LISTER_ROLE`). The admin and
-///         upgrader roles can never be kept, so the deployer still loses every power over the
-///         contracts themselves.
+///         as `CONTRACT_ENV:ROLE_NAME` pairs (e.g. `GEM_REGISTRY_ADDRESS:LISTER_ROLE`). Only the six
+///         roles in `_keepable()` qualify: no admin, upgrader, recovery approval, or role that moves
+///         funds, so the deployer still loses every power over the contracts and their money.
 /// @dev Env: PRIVATE_KEY (deployer), NEW_ADMIN, EXPECTED_CHAIN_ID, and the proxy addresses
 ///      DGE_NFT_ADDRESS, GEM_REGISTRY_ADDRESS, PAYMENT_TOKEN_REGISTRY_ADDRESS,
 ///      RESERVE_MANAGER_ADDRESS, COMPLIANCE_REGISTRY_ADDRESS, TREASURY_ADDRESS,
@@ -119,22 +119,32 @@ contract HandoverRoles is Script {
         return false;
     }
 
-    /// @dev Every `KEEP_ROLES` entry must name one of the ten contracts and an operational role.
+    /// @dev The only roles a single deployer/operator wallet may keep: what the edge functions call.
+    ///      Nothing that moves funds (reserve operator, settler, minter, burner, locker, redeemer),
+    ///      grants power, or approves a recovery burn.
+    function _keepable() private pure returns (string[6] memory) {
+        return [
+            "GEM_REGISTRY_ADDRESS:LISTER_ROLE",
+            "GEM_REGISTRY_ADDRESS:CUSTODIAN_ROLE",
+            "GEM_REGISTRY_ADDRESS:VERIFIER_ROLE",
+            "GEM_REGISTRY_ADDRESS:COMPLIANCE_ROLE",
+            "PRIMARY_SALE_AUCTION_ADDRESS:LISTER_ROLE",
+            "REDEMPTION_MANAGER_ADDRESS:PROOF_APPROVER_ROLE"
+        ];
+    }
+
+    /// @dev Every `KEEP_ROLES` entry must be one of `_keepable()`, checked before anything is sent.
     function _checkKeepList() private view {
         string[] memory none;
         string[] memory keep = vm.envOr("KEEP_ROLES", ",", none);
-        bytes32[] memory roles = _roles();
+        string[6] memory keepable = _keepable();
         for (uint256 i = 0; i < keep.length; i++) {
             if (bytes(keep[i]).length == 0) continue;
-            bool known;
-            for (uint256 c = 0; c < CONTRACT_ENVS.length && !known; c++) {
-                // roles[0] (admin) and roles[1] (upgrader) are never keepable.
-                for (uint256 r = 2; r < roles.length && !known; r++) {
-                    known = keccak256(bytes(keep[i]))
-                        == keccak256(bytes(string.concat(CONTRACT_ENVS[c], ":", _roleName(roles[r]))));
-                }
+            bool allowed;
+            for (uint256 k = 0; k < keepable.length && !allowed; k++) {
+                allowed = keccak256(bytes(keep[i])) == keccak256(bytes(keepable[k]));
             }
-            require(known, string.concat("KEEP_ROLES cannot keep ", keep[i]));
+            require(allowed, string.concat("KEEP_ROLES cannot keep ", keep[i]));
         }
     }
 
