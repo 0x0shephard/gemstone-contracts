@@ -430,7 +430,11 @@ contract RedemptionManager is
     {
         _recordAtPhase(tokenId, RedemptionPhase.ProofApproved);
         RecoveryProposal storage proposal = _recoveryProposals[tokenId];
-        if (proposal.proposalHash != proposalHash || proposal.executed) revert InvalidRecoveryProposal();
+        // An unproposed token reads as a zero hash with zero required approvals, so a zero hash
+        // must never match: it would let one approver burn the token with no proposal or delay.
+        if (proposalHash == bytes32(0) || proposal.proposalHash != proposalHash || proposal.executed) {
+            revert InvalidRecoveryProposal();
+        }
         if (recoveryApprovalBy[proposalHash][msg.sender]) revert DuplicateApprover();
         recoveryApprovalBy[proposalHash][msg.sender] = true;
         proposal.approvals += 1;
@@ -445,7 +449,11 @@ contract RedemptionManager is
     {
         RedemptionRecord storage record = _recordAtPhase(tokenId, RedemptionPhase.ProofApproved);
         RecoveryProposal storage proposal = _recoveryProposals[tokenId];
-        if (proposal.proposalHash != proposalHash || proposal.executed) revert InvalidRecoveryProposal();
+        // An unproposed token reads as a zero hash with zero required approvals, so a zero hash
+        // must never match: it would let one approver burn the token with no proposal or delay.
+        if (proposalHash == bytes32(0) || proposal.proposalHash != proposalHash || proposal.executed) {
+            revert InvalidRecoveryProposal();
+        }
         if (proposal.approvals < proposal.requiredApprovals) {
             revert RecoveryApprovalInsufficient(proposal.requiredApprovals, proposal.approvals);
         }

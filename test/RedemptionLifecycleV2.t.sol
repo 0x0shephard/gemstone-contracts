@@ -221,6 +221,23 @@ contract RedemptionLifecycleV2Test is BaseTest {
         nft.ownerOf(tokenId);
     }
 
+    function testRecoveryCannotUseAnEmptyProposal() public {
+        (uint256 gemId, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://recovery-empty");
+        _prepareApprovedRedemption(tokenId, keccak256("recovery-empty"));
+        vm.warp(block.timestamp + 7 days);
+
+        // Nothing proposed: the stored proposal is all zeroes, including its required approvals.
+        vm.prank(recoveryApproverOne);
+        vm.expectRevert(RedemptionManager.InvalidRecoveryProposal.selector);
+        redemption.executeRecovery(tokenId, bytes32(0));
+        vm.prank(recoveryApproverTwo);
+        vm.expectRevert(RedemptionManager.InvalidRecoveryProposal.selector);
+        redemption.approveRecovery(tokenId, bytes32(0));
+
+        assertEq(nft.ownerOf(tokenId), buyer);
+        assertTrue(registry.getGem(gemId).status != GemRegistry.GemStatus.Redeemed);
+    }
+
     function testFuzzAuthorizationCannotExceedFifteenMinutes(uint64 extraLifetime) public {
         extraLifetime = uint64(bound(extraLifetime, 1, type(uint32).max));
         (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://auth-window-fuzz");
