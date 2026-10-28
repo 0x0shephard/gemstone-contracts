@@ -305,32 +305,38 @@ contract DigitalCaratProtocolTest is BaseTest {
         assertEq(sale.pendingRefunds(address(attacker), address(0)), 0.5 ether);
     }
 
-    function testLeadingBidderCanCancelBidBeforeClose() public {
+    function testLeadingBidIsBindingUntilSettlementGraceExpires() public {
         uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-bid-cancel");
-        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
+        uint64 endTime = uint64(block.timestamp + 1 days);
+        sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), endTime);
+        uint256 withdrawableAt = uint256(endTime) + sale.SETTLEMENT_GRACE();
 
         uint256 buyerBefore = buyer.balance;
         vm.prank(buyer);
         sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
 
-        vm.warp(block.timestamp + 1 days - 1);
+        // No last-second withdrawal: a shielding bid would otherwise leave the floor to a confederate.
+        vm.warp(endTime - 1);
         vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(PrimarySaleAuction.BidLocked.selector, withdrawableAt));
+        sale.cancelBid(gemId);
+        vm.warp(withdrawableAt - 1);
+        vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(PrimarySaleAuction.BidLocked.selector, withdrawableAt));
         sale.cancelBid(gemId);
 
+        // Still unsettled after the grace: the leader may leave.
+        vm.warp(withdrawableAt);
+        vm.prank(buyer);
+        sale.cancelBid(gemId);
+        if (buyer.balance != buyerBefore) {
+            vm.prank(buyer);
+            sale.claimRefund(address(0));
+        }
         assertEq(buyer.balance, buyerBefore);
-        (,,,,, address highestBidder,, uint256 amount, uint256 usdValue,) = sale.auctions(gemId);
-        assertEq(highestBidder, address(0));
-        assertEq(amount, 0);
-        assertEq(usdValue, 0);
-
-        // The auction stays open, and the next bid starts again from the floor.
-        vm.prank(bidder);
-        sale.bid{value: 0.5 ether}(gemId, address(0), 0.5 ether);
-        (,,,,, highestBidder,,,,) = sale.auctions(gemId);
-        assertEq(highestBidder, bidder);
     }
 
-    function testOnlyLeaderCanCancelBidAndOnlyBeforeClose() public {
+    function testOnlyLeaderCanCancelBidAndOnlyWhenReleased() public {
         uint256 gemId = _listedAuctionGem(1_000e18, "ipfs://gem-bid-cancel-guard");
         sale.createAuction(gemId, 1_000e18, uint64(block.timestamp), uint64(block.timestamp + 1 days));
 
@@ -344,10 +350,14 @@ contract DigitalCaratProtocolTest is BaseTest {
         vm.expectRevert(PrimarySaleAuction.NotHighestBidder.selector);
         sale.cancelBid(gemId);
 
-        vm.warp(block.timestamp + 1 days);
+        // Paused: settlement is unavailable, so the leader may leave.
+        sale.pause();
         vm.prank(bidder);
-        vm.expectRevert(PrimarySaleAuction.AuctionEnded.selector);
         sale.cancelBid(gemId);
+        (,,,,, address highestBidder,, uint256 amount, uint256 usdValue,) = sale.auctions(gemId);
+        assertEq(highestBidder, address(0));
+        assertEq(amount, 0);
+        assertEq(usdValue, 0);
     }
 
     function testCannotCancelAuctionOnceBidExists() public {
