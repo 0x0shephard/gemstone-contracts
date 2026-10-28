@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
@@ -17,7 +16,7 @@ import {Roles} from "../src/libraries/Roles.sol";
 /// @dev The chain keeps Sepolia's id so the app and edge functions need no test
 ///      branches; the guard below refuses anything but a local anvil node.
 ///      Prints one `E2E_DEPLOYMENT {json}` line for the harness to parse.
-contract DeployLocalE2E is Script {
+contract DeployLocalE2E is DeployDigitalCarat {
     struct Actors {
         uint256 adminKey;
         uint256 custodianKey;
@@ -55,13 +54,14 @@ contract DeployLocalE2E is Script {
         uint256 bobToken;
     }
 
-    function run() external {
+    function run() external override returns (Deployment memory d) {
         // anvil_nodeInfo only exists on a local anvil node; a public RPC reverts here.
         vm.rpc("anvil_nodeInfo", "[]");
         Actors memory a = _actors();
         Mocks memory m = _deployMocks(a);
         _configureDeploymentEnv(a, m);
-        DeployDigitalCarat.Deployment memory d = new DeployDigitalCarat().run();
+        // Inherited, not `new DeployDigitalCarat().run()`: see DeployDigitalCarat.deploy.
+        d = deploy();
         _verifyRedemptionRoles(d, a);
         Seeded memory seeded = _seed(d, a, m);
         _print(d, m, seeded, a.authorizer);
