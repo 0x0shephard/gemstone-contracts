@@ -30,8 +30,8 @@ contract DeployDigitalCarat is Script {
         SwapEscrow swapEscrow;
     }
 
-    function run() external virtual returns (Deployment memory) {
-        return deploy();
+    function run() external virtual returns (Deployment memory deployment) {
+        deployment = deploy();
     }
 
     /// @dev Public so a script can inherit the deployment instead of creating this
