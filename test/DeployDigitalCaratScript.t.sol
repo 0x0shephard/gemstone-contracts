@@ -206,8 +206,19 @@ contract DeployDigitalCaratScriptTest is Test {
         vm.expectRevert(bytes("DGE_NFT_ADDRESS: NEW_ADMIN lacks admin role"));
         handover.renounce();
 
+        // A single-wallet setup keeps the operator's roles, but never admin or upgrader.
+        vm.setEnv("KEEP_ROLES", "MARKETPLACE_ADDRESS:DEFAULT_ADMIN_ROLE");
+        vm.expectRevert(bytes("KEEP_ROLES cannot keep MARKETPLACE_ADDRESS:DEFAULT_ADMIN_ROLE"));
+        handover.grant();
+        vm.setEnv("KEEP_ROLES", "GEM_REGISTRY_ADDRESS:UPGRADER_ROLE");
+        vm.expectRevert(bytes("KEEP_ROLES cannot keep GEM_REGISTRY_ADDRESS:UPGRADER_ROLE"));
+        handover.renounce();
+        // A trailing comma (an empty entry) is ignored.
+        vm.setEnv("KEEP_ROLES", "GEM_REGISTRY_ADDRESS:LISTER_ROLE,PRIMARY_SALE_AUCTION_ADDRESS:LISTER_ROLE,");
+
         handover.grant();
         handover.renounce();
+        vm.setEnv("KEEP_ROLES", "");
 
         for (uint256 i = 0; i < targets.length; i++) {
             assertTrue(targets[i].hasRole(bytes32(0), safe));
@@ -215,9 +226,12 @@ contract DeployDigitalCaratScriptTest is Test {
             assertFalse(targets[i].hasRole(bytes32(0), deployer));
             assertFalse(targets[i].hasRole(Roles.UPGRADER_ROLE, deployer));
         }
-        // Operational roles the deployer held moved too, for the Safe to re-delegate.
+        // Operational roles moved to the Safe too; only the kept ones stay with the deployer.
         assertTrue(d.registry.hasRole(Roles.LISTER_ROLE, safe));
-        assertFalse(d.registry.hasRole(Roles.LISTER_ROLE, deployer));
+        assertTrue(d.registry.hasRole(Roles.LISTER_ROLE, deployer));
+        assertTrue(d.sale.hasRole(Roles.LISTER_ROLE, deployer));
+        assertFalse(d.registry.hasRole(Roles.CUSTODIAN_ROLE, deployer));
         assertTrue(d.treasury.hasRole(Roles.SETTLER_ROLE, safe));
+        assertFalse(d.treasury.hasRole(Roles.SETTLER_ROLE, deployer));
     }
 }

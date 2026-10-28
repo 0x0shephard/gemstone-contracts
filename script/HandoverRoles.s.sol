@@ -16,6 +16,11 @@ import {Roles} from "../src/libraries/Roles.sol";
 ///         `NEW_ADMIN` holds every one of them, then drops them from the deployer, admin last on each
 ///         contract. After it, the deployer key can do nothing; the Safe grants operational roles
 ///         (lister, custodian, verifier, ...) to the wallets that need them.
+///
+///         When the deployer is also the operator, `KEEP_ROLES` lists the operational roles it keeps,
+///         as `CONTRACT_ENV:ROLE_NAME` pairs (e.g. `GEM_REGISTRY_ADDRESS:LISTER_ROLE`). The admin and
+///         upgrader roles can never be kept, so the deployer still loses every power over the
+///         contracts themselves.
 /// @dev Env: PRIVATE_KEY (deployer), NEW_ADMIN, EXPECTED_CHAIN_ID, and the proxy addresses
 ///      DGE_NFT_ADDRESS, GEM_REGISTRY_ADDRESS, PAYMENT_TOKEN_REGISTRY_ADDRESS,
 ///      RESERVE_MANAGER_ADDRESS, COMPLIANCE_REGISTRY_ADDRESS, TREASURY_ADDRESS,
@@ -86,7 +91,7 @@ contract HandoverRoles is Script {
             IAccessControl target = IAccessControl(vm.envAddress(CONTRACT_ENVS[c]));
             // roles[0] is the admin role; renounce it last so nothing is left ungoverned midway.
             for (uint256 r = roles.length; r > 0; r--) {
-                if (target.hasRole(roles[r - 1], deployer)) {
+                if (target.hasRole(roles[r - 1], deployer) && !_kept(CONTRACT_ENVS[c], roles[r - 1])) {
                     target.renounceRole(roles[r - 1], deployer);
                     console2.log(CONTRACT_ENVS[c], _roleName(roles[r - 1]), "renounced");
                 }
@@ -97,8 +102,39 @@ contract HandoverRoles is Script {
         for (uint256 c = 0; c < CONTRACT_ENVS.length; c++) {
             IAccessControl target = IAccessControl(vm.envAddress(CONTRACT_ENVS[c]));
             for (uint256 r = 0; r < roles.length; r++) {
+                if (_kept(CONTRACT_ENVS[c], roles[r])) continue;
                 require(!target.hasRole(roles[r], deployer), "deployer still holds a role");
             }
+        }
+    }
+
+    /// @dev Whether `KEEP_ROLES` lets the deployer keep `role` on the contract named `contractEnv`.
+    function _kept(string memory contractEnv, bytes32 role) private view returns (bool) {
+        string[] memory none;
+        string[] memory keep = vm.envOr("KEEP_ROLES", ",", none);
+        bytes32 entry = keccak256(bytes(string.concat(contractEnv, ":", _roleName(role))));
+        for (uint256 i = 0; i < keep.length; i++) {
+            if (keccak256(bytes(keep[i])) == entry) return true;
+        }
+        return false;
+    }
+
+    /// @dev Every `KEEP_ROLES` entry must name one of the ten contracts and an operational role.
+    function _checkKeepList() private view {
+        string[] memory none;
+        string[] memory keep = vm.envOr("KEEP_ROLES", ",", none);
+        bytes32[] memory roles = _roles();
+        for (uint256 i = 0; i < keep.length; i++) {
+            if (bytes(keep[i]).length == 0) continue;
+            bool known;
+            for (uint256 c = 0; c < CONTRACT_ENVS.length && !known; c++) {
+                // roles[0] (admin) and roles[1] (upgrader) are never keepable.
+                for (uint256 r = 2; r < roles.length && !known; r++) {
+                    known = keccak256(bytes(keep[i]))
+                        == keccak256(bytes(string.concat(CONTRACT_ENVS[c], ":", _roleName(roles[r]))));
+                }
+            }
+            require(known, string.concat("KEEP_ROLES cannot keep ", keep[i]));
         }
     }
 
@@ -111,6 +147,7 @@ contract HandoverRoles is Script {
         require(
             newAdmin.code.length != 0 || vm.envOr("ALLOW_EOA_ADMIN", false), "NEW_ADMIN has no code; expected a Safe"
         );
+        _checkKeepList();
     }
 
     function _roles() private pure returns (bytes32[] memory roles) {
