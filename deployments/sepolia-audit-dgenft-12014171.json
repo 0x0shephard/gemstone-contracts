@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-audit-dgenft-12014171",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 12014171,
+  "upgradedAt": "2026-10-28T18:40:24Z",
+  "source": {
+    "commit": "719ec87c8686154b7097a808186476cee80a8e9a",
+    "script": "script/UpgradeDGENFT.s.sol:UpgradeDGENFT"
+  },
+  "proxy": "0x591bB1da8b80C773211301f7fa6f639617182a0d",
+  "previousImplementation": "0x4894bFb9304b447E8F79d1e6F9BAB68b9C5Aab9F",
+  "implementation": "0xF780893F5495Ac68E2084dF7AF3225457B159C7D",
+  "implementationCodeHash": "0x619795aba9fb65ccf3a4b46cb5788c8d0cc7914c44aa20bc43d84ac04e464440",
+  "frontendAbiSha256": "a0dfe2ff031fedbc47667e1dc591aa10f422383be3b9ed2d8113d03860ca3778",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0xad428af662f6ff99e4d3ad85b172bb07f7ce3df7bf5f839deff1ccca57b89a36",
+      "blockNumber": 12014170,
+      "blockHash": "0x409559e54c0b027dec4b3ed4fc5f4fcb262ea8f3273b1a4613f77100f0a12c9b",
+      "gasUsed": 23267852,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0xce70c25387e195f5710e77330a8197b7e90e03507764e028f7df345eb0cec6ac",
+      "blockNumber": 12014171,
+      "blockHash": "0x28bee0d665c9ae9148a929cf739220fb643d6815147f6b08c874e98b2eba14c4",
+      "gasUsed": 40106,
+      "status": 1
+    }
+  },
+  "change": "Zero-reserve transfer rule applies only when the policy charges and no reserve asset is held; owner()/contractURI() for marketplaces; royalty cap 10%."
+}

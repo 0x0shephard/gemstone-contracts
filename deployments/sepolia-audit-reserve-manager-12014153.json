@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-audit-reserve-manager-12014153",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 12014153,
+  "upgradedAt": "2026-10-28T18:36:48Z",
+  "source": {
+    "commit": "719ec87c8686154b7097a808186476cee80a8e9a",
+    "script": "script/UpgradeReserveManager.s.sol:UpgradeReserveManager"
+  },
+  "proxy": "0x4dfC6f9274BAF037027166bB234543fdD8019f1E",
+  "previousImplementation": "0x5dB0ae3C70655eD3B9553255cD1fF9bc6eb0A85e",
+  "implementation": "0x68eeB5072ceef495DAFf3b671314eE8a5fa663b1",
+  "implementationCodeHash": "0x99d5644693625c04bf455a2d16edf60f2a8c3a3a0c29da09380699290a81de5f",
+  "frontendAbiSha256": "6f46169bc35f3c66b32ee5ca657ed8eca2f0591f7ed8eac2f838e944b6d8d0ae",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x383e0af1ee93bfce28db94713099ef791e5d0cf2d6b2e6cb6723c7c477d9f3d9",
+      "blockNumber": 12014152,
+      "blockHash": "0x4f874ab10516087abde99576f6b07dcd544fe95aff1ac0627bbc71513f8967fa",
+      "gasUsed": 21958098,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0xc81ab1472187f3beb3e499eb113d5f2c12d604502aec0def1fda0f069439c277",
+      "blockNumber": 12014153,
+      "blockHash": "0x740481ee2ad44d59601b46e27cad8f9120cecee26c3bb19aa84fb068348b145b",
+      "gasUsed": 40053,
+      "status": 1
+    }
+  },
+  "change": "hasReserveAssets(gemId); requireSolvent returns early with no liabilities and checks the sequencer."
+}

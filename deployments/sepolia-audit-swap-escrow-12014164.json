@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-audit-swap-escrow-12014164",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 12014164,
+  "upgradedAt": "2026-10-28T18:39:00Z",
+  "source": {
+    "commit": "719ec87c8686154b7097a808186476cee80a8e9a",
+    "script": "script/UpgradeSwapEscrow.s.sol:UpgradeSwapEscrow"
+  },
+  "proxy": "0x8eba95fc2f3eEB4854f8CA751A11dF5FE645F7af",
+  "previousImplementation": "0x0B9662D757B5BC70CdB64e80c46B47981E17EcA0",
+  "implementation": "0x200c5209C24B4Db8Ef6ADe157A209Bc27c3bF9c1",
+  "implementationCodeHash": "0x7cc0bef0f1f434897fbb3a96808062b33ec746babd22c801a26713177d00f67a",
+  "frontendAbiSha256": "12b56849bbbc126ad8c4c08ecbed7c170e78e5fece9631eb53fe5ebed22cac2b",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x02fac506125aeb3c30241ce85de33999cefa3c02fbf19cb35d728ee6ad9b188a",
+      "blockNumber": 12014163,
+      "blockHash": "0x32f784a16b7bd480a59c31885ddef686b65b719eb9c38a9d48a41dbb0d42765d",
+      "gasUsed": 16052745,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x89a8a28f948f8a8df45c7f916de6ec0eb5ee72f4e67d008bede5076b37bfe1bf",
+      "blockNumber": 12014164,
+      "blockHash": "0x65eabe1d33359a3dd6f66eb18a3c5232b0b2d0448b83e75188295b135468241c",
+      "gasUsed": 40109,
+      "status": 1
+    }
+  },
+  "change": "Swap reserve checks require a live sequencer."
+}
