@@ -166,11 +166,11 @@ contract DeployDigitalCarat is Script {
         _initializeNftReserveGuard(deployment, giftOperator);
 
         _configurePayments(deployment.payments, productionDeployment);
-        _configureReservePolicy(deployment.reserveManager);
+        _configureReservePolicy(deployment.reserveManager, productionDeployment);
         deployment.marketplace.setSecondaryFeeRecipient(platformRecipient);
         uint256 secondaryFeeBps = vm.envOr("SECONDARY_FEE_BPS", uint256(200));
-        require(secondaryFeeBps <= 10_000, "SECONDARY_FEE_BPS too high");
-        // casting to uint16 is safe because the value is capped at 10_000 above.
+        require(secondaryFeeBps <= deployment.marketplace.MAX_SECONDARY_FEE_BPS(), "SECONDARY_FEE_BPS too high");
+        // casting to uint16 is safe because the value is capped at MAX_SECONDARY_FEE_BPS above.
         // forge-lint: disable-next-line(unsafe-typecast)
         deployment.marketplace.setSecondaryFeeBps(uint16(secondaryFeeBps));
 
@@ -344,7 +344,17 @@ contract DeployDigitalCarat is Script {
         payments.setToken(token, feed, staleAfter, true);
     }
 
-    function _configureReservePolicy(ReserveManager reserveManager) private {
+    function _configureReservePolicy(ReserveManager reserveManager, bool productionDeployment) private {
+        // At the contract default of 100% there is no headroom: once reserves are on, a 0.05% dip in
+        // the ETH price held as reserve halts every purchase. Production must choose a floor.
+        uint256 minimumCoverageBps = productionDeployment
+            ? vm.envUint("MINIMUM_COVERAGE_BPS")
+            : vm.envOr("MINIMUM_COVERAGE_BPS", uint256(10_000));
+        require(minimumCoverageBps >= 9_000 && minimumCoverageBps <= 10_000, "MINIMUM_COVERAGE_BPS out of range");
+        // casting to uint16 is safe because the value is capped at 10_000 above.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        reserveManager.setMinimumCoverageBps(uint16(minimumCoverageBps));
+
         uint256 defaultReserveBps = vm.envUint("DEFAULT_RESERVE_BPS");
         require(defaultReserveBps <= 10_000, "DEFAULT_RESERVE_BPS too high");
         // casting to uint16 is safe because the value is capped at 10_000 above.

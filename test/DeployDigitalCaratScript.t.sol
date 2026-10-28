@@ -51,6 +51,7 @@ contract DeployDigitalCaratScriptTest is Test {
             "1000000000000000000000,115792089237316195423570985008687907853269984665640564039457584007913129639935"
         );
         vm.setEnv("RESERVE_BRACKET_BPS", "0,0");
+        vm.setEnv("MINIMUM_COVERAGE_BPS", "9500");
         vm.setEnv("COLLECTION_OWNER", vm.toString(address(0x8001)));
         vm.setEnv("CONTRACT_URI", "https://digitalcarat.io/collection.json");
         vm.setEnv("ROYALTY_RECEIVER", vm.toString(address(0x8002)));
@@ -98,6 +99,13 @@ contract DeployDigitalCaratScriptTest is Test {
         vm.stopBroadcast();
         vm.setEnv("ROYALTY_BPS", "250");
 
+        // The solvency floor stays within 90-100%, and the platform fee within 10%.
+        _expectDeployRevert("MINIMUM_COVERAGE_BPS", "8999", "MINIMUM_COVERAGE_BPS out of range");
+        _expectDeployRevert("MINIMUM_COVERAGE_BPS", "10001", "MINIMUM_COVERAGE_BPS out of range");
+        vm.setEnv("MINIMUM_COVERAGE_BPS", "9500");
+        _expectDeployRevert("SECONDARY_FEE_BPS", "1001", "SECONDARY_FEE_BPS too high");
+        vm.setEnv("SECONDARY_FEE_BPS", "200");
+
         DeployDigitalCarat.Deployment memory deployment = new DeployDigitalCarat().run();
         address admin = vm.addr(DEPLOYER_KEY);
 
@@ -123,6 +131,10 @@ contract DeployDigitalCaratScriptTest is Test {
         (address royaltyReceiver, uint256 royalty) = deployment.nft.royaltyInfo(1, 10_000);
         assertEq(royaltyReceiver, address(0x8002));
         assertEq(royalty, 250);
+
+        // Headroom below full coverage, so a small price move does not halt purchases.
+        assertEq(deployment.reserveManager.minimumCoverageBps(), 9500);
+        assertEq(deployment.marketplace.secondaryFeeBps(), 200);
 
         // The reserve-free policy charges nothing.
         assertEq(deployment.reserveManager.reserveBpsFor(500e18), 0);

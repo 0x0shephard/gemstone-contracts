@@ -45,6 +45,8 @@ contract PrimarySaleAuction is
     uint64 public constant DAILY_AUCTION_DURATION = 1 days;
     uint256 public constant MAX_BATCH_SETTLEMENTS = 50;
     uint256 public constant MIN_BID_INCREMENT_USD = 1e18;
+    /// @notice How long after an auction ends its leading bid stays committed to settlement.
+    uint64 public constant SETTLEMENT_GRACE = 7 days;
 
     mapping(uint256 gemId => Auction) public auctions;
     mapping(address account => mapping(address asset => uint256 amount)) public pendingRefunds;
@@ -87,6 +89,7 @@ contract PrimarySaleAuction is
     error TransferFailed();
     error BatchTooLarge();
     error NotHighestBidder();
+    error BidLocked(uint256 withdrawableAt);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -267,17 +270,20 @@ contract PrimarySaleAuction is
         emit BidPlaced(gemId, msg.sender, paymentAsset, received, saleUsd);
     }
 
-    /// @notice Withdraws the caller's leading bid before the auction closes.
-    /// @dev Only the leader has funds escrowed here; outbid bidders were refunded when
-    /// outbid. The auction returns to the floor with no bids and stays open, so any
-    /// bidder may then bid from the floor again. Allowed until `endTime`, the same
-    /// instant after which bidding stops. Works while paused so funds are never stuck.
+    /// @notice Withdraws the caller's leading bid when it is no longer committed.
+    /// @dev The leading bid is binding: it leaves only by being outbid or settled.
+    /// Withdrawing it mid-auction let a bidder shield an auction with a high bid that
+    /// warned others off, then pull it at the last moment for a floor-price win. Two
+    /// exits keep funds from being stuck: while paused, and once the auction has gone
+    /// `SETTLEMENT_GRACE` past its end without being settled (for example a winner
+    /// contract that rejects the mint). The auction returns to the floor with no bids.
     /// @param gemId Auctioned gem id.
     function cancelBid(uint256 gemId) external nonReentrant {
         Auction storage auction = auctions[gemId];
         if (!auction.exists || auction.settled) revert InvalidAuction();
-        if (block.timestamp >= auction.endTime) revert AuctionEnded();
         if (auction.highestBidder != msg.sender) revert NotHighestBidder();
+        uint256 withdrawableAt = uint256(auction.endTime) + SETTLEMENT_GRACE;
+        if (!paused() && block.timestamp < withdrawableAt) revert BidLocked(withdrawableAt);
 
         address asset = auction.paymentAsset;
         uint256 amount = auction.amount;
@@ -472,9 +478,13 @@ contract PrimarySaleAuction is
     }
 
     /// @dev Non-reverting refund attempt used only before the pull-credit fallback.
-    function _tryRefund(address to, address paymentAsset, uint256 amount) private returns (bool) {
+    function _tryRefund(address to, address paymentAsset, uint256 amount) private returns (bool sent) {
         if (paymentAsset == address(0)) {
-            (bool sent,) = payable(to).call{value: amount}("");
+            // No return data is copied: a receiver reverting with a huge payload would otherwise
+            // make this frame pay to expand memory for it and run the outbid out of gas.
+            assembly ("memory-safe") {
+                sent := call(gas(), to, amount, 0, 0, 0, 0)
+            }
             return sent;
         }
         (bool called, bytes memory result) = paymentAsset.call(abi.encodeCall(IERC20.transfer, (to, amount)));

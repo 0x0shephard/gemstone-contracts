@@ -51,8 +51,13 @@ contract Marketplace is
     }
 
     uint16 public constant BPS_DENOMINATOR = 10_000;
+    /// @notice Highest platform fee on a secondary sale (10%), so the admin key cannot take a sale.
+    uint16 public constant MAX_SECONDARY_FEE_BPS = 1_000;
     uint64 public constant OFFER_DURATION = 1 days;
     uint256 public constant MIN_BID_INCREMENT_USD = 1e18;
+    /// @notice How long after a listing auction ends its winning bid stays committed to settlement.
+    /// @dev Settlement is permissionless; this only bounds how long a bidder's funds can wait on it.
+    uint64 public constant SETTLEMENT_GRACE = 7 days;
 
     DGENFT public nft;
     GemRegistry public registry;
@@ -121,6 +126,7 @@ contract Marketplace is
     error TransferFailed();
     error GemNotMinted();
     error AuctionActive();
+    error BidLocked(uint256 withdrawableAt);
     error AuctionNotEnded();
     error BidTooLow();
 
@@ -326,17 +332,20 @@ contract Marketplace is
 
     /// @notice Withdraws the caller's own offer and refunds its escrow.
     /// @dev An offer on an unlisted token can be withdrawn at any time while it is
-    /// active. The leading bid on a listed token can be withdrawn until its
-    /// 24-hour auction ends; the listing then has no bids and stays listed at its
-    /// ask, so the seller may cancel it or a new bid may start a fresh auction.
-    /// Works while paused so escrowed funds are never stuck.
+    /// active. The leading bid on a listed token is binding: it leaves only by being
+    /// outbid or settled. Withdrawing it mid-auction let a bidder hold a listing
+    /// indefinitely (withdraw and rebid restarts the 24 hours, and the seller cannot
+    /// cancel under a live bid). Two exits keep funds from being stuck: while paused,
+    /// and once the auction has gone `SETTLEMENT_GRACE` past its end without being
+    /// settled. The listing then has no bids and stays listed at its ask.
     /// @param offerId Offer id to withdraw.
     function cancelOffer(uint256 offerId) external nonReentrant {
         Offer memory offer = offers[offerId];
         if (!offer.active) revert InvalidOffer();
         if (offer.bidder != msg.sender) revert NotBidder();
         if (listingWinningOffer[offer.tokenId] == offerId) {
-            if (block.timestamp >= listingAuctionEnd[offer.tokenId]) revert Expired();
+            uint256 withdrawableAt = uint256(listingAuctionEnd[offer.tokenId]) + SETTLEMENT_GRACE;
+            if (!paused() && block.timestamp < withdrawableAt) revert BidLocked(withdrawableAt);
             delete listingWinningOffer[offer.tokenId];
             delete listingAuctionEnd[offer.tokenId];
         }
@@ -453,7 +462,10 @@ contract Marketplace is
         }
         reserveManager.syncProjectedLiabilityUsd(settlement.gemId, settlement.gemPriceUsd);
         _settleSecondary(offer.paymentAsset, listing.seller, saleAmount);
-        nft.safeTransferFrom(address(this), offer.bidder, settlement.tokenId);
+        // Not safeTransferFrom: a bidder contract that rejects the token would otherwise make the
+        // only exit from an ended auction revert, locking the seller's token and the bid. The
+        // bidder chose the receiving address.
+        nft.transferFrom(address(this), offer.bidder, settlement.tokenId);
 
         emit OfferAccepted(settlement.offerId, listing.seller);
         emit ListingAuctionSettled(
@@ -482,7 +494,7 @@ contract Marketplace is
     /// @notice Sets secondary marketplace fee BPS.
     /// @param feeBps Fee in basis points.
     function setSecondaryFeeBps(uint16 feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (feeBps > BPS_DENOMINATOR) revert InvalidFee();
+        if (feeBps > MAX_SECONDARY_FEE_BPS) revert InvalidFee();
         secondaryFeeBps = feeBps;
         emit SecondaryFeeUpdated(feeBps);
     }
@@ -525,19 +537,14 @@ contract Marketplace is
         if (received == 0) revert InvalidAmount();
     }
 
-    /// @dev Settles secondary sale proceeds between seller and fee recipient.
+    /// @dev Settles secondary sale proceeds between seller and fee recipient. A payee that cannot
+    /// receive (a contract rejecting ETH, a token-blocklisted address) is credited to
+    /// `pendingRefunds` and claims it later, so it cannot block a settlement the buyer funded.
     function _settleSecondary(address paymentAsset, address seller, uint256 amount) private {
         if (amount == 0) return;
         uint256 feeAmount = (amount * secondaryFeeBps) / BPS_DENOMINATOR;
-        uint256 sellerAmount = amount - feeAmount;
-        if (paymentAsset == address(0)) {
-            _sendPayment(seller, paymentAsset, sellerAmount);
-            _sendPayment(secondaryFeeRecipient, paymentAsset, feeAmount);
-            return;
-        }
-
-        _sendPayment(seller, paymentAsset, sellerAmount);
-        _sendPayment(secondaryFeeRecipient, paymentAsset, feeAmount);
+        _refundOrCredit(seller, paymentAsset, amount - feeAmount);
+        _refundOrCredit(secondaryFeeRecipient, paymentAsset, feeAmount);
     }
 
     /// @dev Transfers reserve funds to ReserveManager and records quoted reserve funding.
@@ -578,8 +585,8 @@ contract Marketplace is
         IERC20(paymentAsset).safeTransfer(to, amount);
     }
 
-    /// @dev Pushes losing bids back immediately without letting a hostile
-    /// receiver block the higher bid. A failed push remains claimable.
+    /// @dev Pushes a payment (a losing bid's refund, or sale proceeds) without letting a hostile
+    /// receiver revert the caller. A failed push remains claimable through `claimRefund`.
     function _refundOrCredit(address to, address paymentAsset, uint256 amount) private {
         if (amount == 0) return;
         if (_tryPayment(to, paymentAsset, amount)) {
@@ -590,9 +597,13 @@ contract Marketplace is
         emit RefundCredited(to, paymentAsset, amount);
     }
 
-    function _tryPayment(address to, address paymentAsset, uint256 amount) private returns (bool) {
+    function _tryPayment(address to, address paymentAsset, uint256 amount) private returns (bool sent) {
         if (paymentAsset == address(0)) {
-            (bool sent,) = payable(to).call{value: amount}("");
+            // No return data is copied: a receiver reverting with a huge payload would otherwise
+            // make this frame pay to expand memory for it and run the settlement out of gas.
+            assembly ("memory-safe") {
+                sent := call(gas(), to, amount, 0, 0, 0, 0)
+            }
             return sent;
         }
         (bool called, bytes memory result) = paymentAsset.call(abi.encodeCall(IERC20.transfer, (to, amount)));

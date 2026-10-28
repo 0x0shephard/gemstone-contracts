@@ -149,7 +149,7 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         marketplace.cancelOffer(offerId);
     }
 
-    function testLeadingListedBidCanBeWithdrawnBeforeTheAuctionEnds() public {
+    function testLeadingListedBidIsBindingUntilSettlementGraceExpires() public {
         (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction-withdraw");
 
         vm.startPrank(buyer);
@@ -160,36 +160,48 @@ contract NftMarketplaceLifecycleTest is BaseTest {
         uint256 bidderBefore = bidder.balance;
         vm.prank(bidder);
         uint256 offerId = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
+        uint256 withdrawableAt = marketplace.listingAuctionEnd(tokenId) + marketplace.SETTLEMENT_GRACE();
 
+        // Binding mid-auction, and through the settlement window after it.
         vm.prank(bidder);
+        vm.expectRevert(abi.encodeWithSelector(Marketplace.BidLocked.selector, withdrawableAt));
+        marketplace.cancelOffer(offerId);
+        vm.warp(withdrawableAt - 1);
+        vm.prank(bidder);
+        vm.expectRevert(abi.encodeWithSelector(Marketplace.BidLocked.selector, withdrawableAt));
         marketplace.cancelOffer(offerId);
 
+        // Never settled: the bidder may leave, and the listing survives with no bids.
+        vm.warp(withdrawableAt);
+        vm.prank(bidder);
+        marketplace.cancelOffer(offerId);
         assertEq(bidder.balance, bidderBefore);
         assertEq(marketplace.listingWinningOffer(tokenId), 0);
         assertEq(marketplace.listingAuctionEnd(tokenId), 0);
-        // The listing survives with no bids: the seller can cancel it again,
-        // and a new qualifying bid starts a fresh 24-hour auction.
+        ethFeed.updateAnswer(2_000e8); // eight days on, the feed needs a fresh round
         vm.prank(stranger);
         uint256 next = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
         assertEq(marketplace.listingWinningOffer(tokenId), next);
         assertEq(marketplace.listingAuctionEnd(tokenId), block.timestamp + 1 days);
     }
 
-    function testLeadingListedBidCannotBeWithdrawnOnceTheAuctionEnds() public {
-        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction-withdraw-late");
+    function testLeadingListedBidCanBeWithdrawnWhilePaused() public {
+        (, uint256 tokenId) = _mintGemTo(buyer, 1_000e18, "ipfs://listed-auction-withdraw-paused");
 
         vm.startPrank(buyer);
         nft.approve(address(marketplace), tokenId);
         marketplace.list(tokenId, 1_100e18);
         vm.stopPrank();
 
+        uint256 bidderBefore = bidder.balance;
         vm.prank(bidder);
         uint256 offerId = marketplace.createOffer{value: 0.55 ether}(tokenId, address(0), 0.55 ether);
 
-        vm.warp(block.timestamp + 1 days);
+        // Settlement is unavailable while paused, so escrow must not be.
+        marketplace.pause();
         vm.prank(bidder);
-        vm.expectRevert(Marketplace.Expired.selector);
         marketplace.cancelOffer(offerId);
+        assertEq(bidder.balance, bidderBefore);
     }
 
     function testOfferWithdrawalWorksWhilePaused() public {
