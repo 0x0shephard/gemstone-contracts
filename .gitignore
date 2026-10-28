@@ -10,5 +10,7 @@ out/
 # Docs
 docs/
 
-# Dotenv file
+# Dotenv files: real keys never committed, templates are
 .env
+.env.*
+!.env.*.example

@@ -24,6 +24,10 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        # Same version as the app repo's CI, which deploys these contracts in its e2e
+        # stack: an unpinned toolchain once passed here while that deploy ran out of gas.
+        with:
+          version: v1.8.5
 
       - name: Show Forge version
         run: forge --version
