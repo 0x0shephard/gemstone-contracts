@@ -30,7 +30,14 @@ contract DeployDigitalCarat is Script {
         SwapEscrow swapEscrow;
     }
 
-    function run() external returns (Deployment memory deployment) {
+    function run() external virtual returns (Deployment memory deployment) {
+        deployment = deploy();
+    }
+
+    /// @dev Public so a script can inherit the deployment instead of creating this
+    ///      contract: a nested creation carrying every implementation's initcode
+    ///      exceeds the 30M gas forge gives a nested call (DeployLocalE2E).
+    function deploy() public returns (Deployment memory deployment) {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.addr(deployerKey);
         uint256 expectedChainId = vm.envOr("EXPECTED_CHAIN_ID", block.chainid);
