@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-audit-primary-sale-auction-12014161",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 12014161,
+  "upgradedAt": "2026-10-28T18:38:24Z",
+  "source": {
+    "commit": "719ec87c8686154b7097a808186476cee80a8e9a",
+    "script": "script/UpgradePrimarySaleAuction.s.sol:UpgradePrimarySaleAuction"
+  },
+  "proxy": "0x7C6a7deCDB433B3B47A4BB73C59E0Cd089e6F1A3",
+  "previousImplementation": "0xFae91B2325656dc4Cecf96710285EEE08e53Fa0b",
+  "implementation": "0x0946Ef98Cc12597239313C2c1c5F4fD26A9C5Bd1",
+  "implementationCodeHash": "0x679d8ae9dfd3e096e29c29bbe983350f0a9d63144beeb5a83f8a08bcc20741f4",
+  "frontendAbiSha256": "094f86d7ec36c50765f66577f199207c8edd325a178caeab2c724efeadb4412d",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0xb8f35d776a34167069a48fbb8f94b337778f6c014862a3839e09c7921e1cb7bb",
+      "blockNumber": 12014160,
+      "blockHash": "0x0e0d5a0d1edd0d1ad7fd5ecaba23419c1ea7b984306bbb32caa6db7c4d6325cf",
+      "gasUsed": 26004144,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x572e12e9041911503b485e9f759e459ab54c1670d08122b90aa8afc94115b7dd",
+      "blockNumber": 12014161,
+      "blockHash": "0xca94fa4d7c508ff59a9cb8a70d335a938e419cca96f77db6e341c8f520ce980b",
+      "gasUsed": 40067,
+      "status": 1
+    }
+  },
+  "change": "Audit M-2: the leading bid is binding (BidLocked) until 7 days after the close unless paused; return-bomb-safe refunds; settlement reverts during a sequencer outage."
+}

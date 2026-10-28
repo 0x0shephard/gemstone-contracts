@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-audit-payment-token-registry-12014149",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 12014149,
+  "upgradedAt": "2026-10-28T18:36:00Z",
+  "source": {
+    "commit": "719ec87c8686154b7097a808186476cee80a8e9a",
+    "script": "script/UpgradePaymentTokenRegistry.s.sol:UpgradePaymentTokenRegistry"
+  },
+  "proxy": "0x6a6cCA11D5a9059826bB252ea6418305f95f5efE",
+  "previousImplementation": "0x1939B78a93aAf2379C5D872D39Ce844E5C459F08",
+  "implementation": "0xCb5F42113810D8AC4b91Fc523B6006D9e867Dab7",
+  "implementationCodeHash": "0x7853069832dcc587598f788c992dfd3b18ecdc0dacad3cfe4c33981a2371b6d3",
+  "frontendAbiSha256": "eb42d455a714aadb76bf14ba9b634a5ba31ceef4ddbb659acc5c33b3ea89b56f",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x3e50c7a3a8bec5f86bcec6e0cb618fe10fd6f5dffd056fd29df7a9ee2c95eac0",
+      "blockNumber": 12014148,
+      "blockHash": "0xc0d8973a1ab1b1a7dab05d642555daea89eca97ff043a7f4e37363bba63a0acd",
+      "gasUsed": 14364819,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x9a424e8ddef378d1a0faa114cd88a6f07f8ed5e09a7b61eb7bfb271ad52f18c6",
+      "blockNumber": 12014149,
+      "blockHash": "0x117c320f0ad49084bd1e1d6e67d04081bc85329e9c27ee888126c2661960f5af",
+      "gasUsed": 39919,
+      "status": 1
+    }
+  },
+  "change": "Optional L2 sequencer-uptime feed (unset on Sepolia) and requireSequencerUp(); per-token staleness."
+}

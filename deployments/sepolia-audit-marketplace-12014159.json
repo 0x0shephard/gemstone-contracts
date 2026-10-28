@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "release": "sepolia-audit-marketplace-12014159",
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "upgradeBlock": 12014159,
+  "upgradedAt": "2026-10-28T18:38:00Z",
+  "source": {
+    "commit": "719ec87c8686154b7097a808186476cee80a8e9a",
+    "script": "script/UpgradeMarketplace.s.sol:UpgradeMarketplace"
+  },
+  "proxy": "0x4410987B2679bF46AcF75f69372177E882582694",
+  "previousImplementation": "0x35C601878761aBeD56edefD2252A5825332df9f6",
+  "implementation": "0x79dA38201A91E486AfFA3fBcB4079213e929d08F",
+  "implementationCodeHash": "0x7a4dc44fe7846d5c49c30effaaee9e5cb5224c9b9626e4af3040e9dac1179b7e",
+  "frontendAbiSha256": "969a283381dbf452f188c7550b7fb792af35949be2869fbaf9058998edc0e226",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0xd1fd427623d5b8472c554c6f3f2b14f38ea23471d759676a4271f87ee754476b",
+      "blockNumber": 12014158,
+      "blockHash": "0x35a69c9f9afa2b5c686549f2e684d14f1cfcac0f774ea9a1a62135906948b6a1",
+      "gasUsed": 30321996,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x241e6ad107d7e30dbeab4a96800526e0db77c61c5a54f1feef9e0ff03327f286",
+      "blockNumber": 12014159,
+      "blockHash": "0x9d64ec8ba72eef2d84a2dd8feadf519b2f409408805e16b636666807531c2dd7",
+      "gasUsed": 40110,
+      "status": 1
+    }
+  },
+  "change": "Audit H-2/M-1: settlement credits payees that cannot receive and delivers with transferFrom; leading listing bids are binding (BidLocked) until 7 days after the close unless paused; return-bomb-safe ETH pushes; secondary fee capped at 10%."
+}
