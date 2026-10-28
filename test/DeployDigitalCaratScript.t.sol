@@ -2,7 +2,9 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {DeployDigitalCarat} from "../script/DeployDigitalCarat.s.sol";
+import {HandoverRoles} from "../script/HandoverRoles.s.sol";
 import {Roles} from "../src/libraries/Roles.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockV3Aggregator} from "./mocks/MockV3Aggregator.sol";
@@ -140,6 +142,8 @@ contract DeployDigitalCaratScriptTest is Test {
         assertEq(deployment.reserveManager.reserveBpsFor(500e18), 0);
         assertEq(deployment.reserveManager.reserveBpsFor(5_000e18), 0);
 
+        _handOverRolesToSafe(deployment);
+
         // A Sepolia (non-production) deployment needs none of the L2 or production settings and
         // keeps the testnet behaviour: no uptime check, admin minting for fixtures.
         vm.chainId(11155111);
@@ -167,5 +171,53 @@ contract DeployDigitalCaratScriptTest is Test {
         vm.expectRevert(bytes(reason));
         script.run();
         vm.stopBroadcast(); // a reverted run leaves its broadcast open
+    }
+
+    /// @dev The deployer's roles move to a Safe in two runs; the second refuses until the first is done.
+    function _handOverRolesToSafe(DeployDigitalCarat.Deployment memory d) private {
+        address safe = address(0x5AFE);
+        vm.etch(safe, hex"00"); // a contract, as a Safe is
+        vm.setEnv("NEW_ADMIN", vm.toString(safe));
+        vm.setEnv("DGE_NFT_ADDRESS", vm.toString(address(d.nft)));
+        vm.setEnv("GEM_REGISTRY_ADDRESS", vm.toString(address(d.registry)));
+        vm.setEnv("PAYMENT_TOKEN_REGISTRY_ADDRESS", vm.toString(address(d.payments)));
+        vm.setEnv("RESERVE_MANAGER_ADDRESS", vm.toString(address(d.reserveManager)));
+        vm.setEnv("COMPLIANCE_REGISTRY_ADDRESS", vm.toString(address(d.compliance)));
+        vm.setEnv("TREASURY_ADDRESS", vm.toString(address(d.treasury)));
+        vm.setEnv("PRIMARY_SALE_AUCTION_ADDRESS", vm.toString(address(d.sale)));
+        vm.setEnv("REDEMPTION_MANAGER_ADDRESS", vm.toString(address(d.redemption)));
+        vm.setEnv("MARKETPLACE_ADDRESS", vm.toString(address(d.marketplace)));
+        vm.setEnv("SWAP_ESCROW_ADDRESS", vm.toString(address(d.swapEscrow)));
+        address deployer = vm.addr(DEPLOYER_KEY);
+        IAccessControl[10] memory targets = [
+            IAccessControl(address(d.nft)),
+            IAccessControl(address(d.registry)),
+            IAccessControl(address(d.payments)),
+            IAccessControl(address(d.reserveManager)),
+            IAccessControl(address(d.compliance)),
+            IAccessControl(address(d.treasury)),
+            IAccessControl(address(d.sale)),
+            IAccessControl(address(d.redemption)),
+            IAccessControl(address(d.marketplace)),
+            IAccessControl(address(d.swapEscrow))
+        ];
+
+        HandoverRoles handover = new HandoverRoles();
+        vm.expectRevert(bytes("DGE_NFT_ADDRESS: NEW_ADMIN lacks admin role"));
+        handover.renounce();
+
+        handover.grant();
+        handover.renounce();
+
+        for (uint256 i = 0; i < targets.length; i++) {
+            assertTrue(targets[i].hasRole(bytes32(0), safe));
+            assertTrue(targets[i].hasRole(Roles.UPGRADER_ROLE, safe));
+            assertFalse(targets[i].hasRole(bytes32(0), deployer));
+            assertFalse(targets[i].hasRole(Roles.UPGRADER_ROLE, deployer));
+        }
+        // Operational roles the deployer held moved too, for the Safe to re-delegate.
+        assertTrue(d.registry.hasRole(Roles.LISTER_ROLE, safe));
+        assertFalse(d.registry.hasRole(Roles.LISTER_ROLE, deployer));
+        assertTrue(d.treasury.hasRole(Roles.SETTLER_ROLE, safe));
     }
 }
