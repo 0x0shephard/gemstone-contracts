@@ -13,8 +13,7 @@
     "broadcast": "broadcast/DeployDigitalCarat.s.sol/42161/run-1793273218592.json",
     "foundry": "1.8.5"
   },
-  "admin": "0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53",
-  "pendingAdmin": "0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9",
+  "admin": "0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9",
   "giftOperator": "0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53",
   "addresses": {
     "DGENFT": "0x603687aBbc6504Bc6EA8836fA44cFBaE92b42D4E",
@@ -113,5 +112,38 @@
     "sequencerUptimeChecked": true,
     "safeHoldsNoRolesYet": true
   },
-  "handover": "pending: HandoverRoles grant()/renounce() to the Safe once 0xCc62... is removed from it or its threshold is raised to 2"
+  "handover": {
+    "completedAt": "2026-10-29",
+    "safeOwners": [
+      "0xa01ee4947095b038B1b2972af1FF1796f7fe587d",
+      "0xb72DC001f39f9a4A8E1cA1cd4271060860E56742"
+    ],
+    "safeThreshold": 1,
+    "grant": {
+      "transactions": 31,
+      "allSuccessful": true,
+      "firstBlock": 519350222,
+      "lastBlock": 519350569,
+      "broadcast": "broadcast/HandoverRoles.s.sol/42161/grant-latest.json"
+    },
+    "renounce": {
+      "transactions": 25,
+      "allSuccessful": true,
+      "firstBlock": 519351688,
+      "lastBlock": 519351949,
+      "broadcast": "broadcast/HandoverRoles.s.sol/42161/renounce-latest.json"
+    },
+    "verified": "Safe holds DEFAULT_ADMIN_ROLE and UPGRADER_ROLE on all ten contracts; the operator holds no admin, upgrader, settler, reserve-operator or redeemer role"
+  },
+  "operator": {
+    "address": "0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53",
+    "keptRoles": [
+      "GemRegistry:LISTER_ROLE",
+      "GemRegistry:CUSTODIAN_ROLE",
+      "GemRegistry:VERIFIER_ROLE",
+      "GemRegistry:COMPLIANCE_ROLE",
+      "PrimarySaleAuction:LISTER_ROLE",
+      "RedemptionManager:PROOF_APPROVER_ROLE"
+    ]
+  }
 }
