@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "release": "arbitrum-one-519342582",
+  "network": "arbitrum-one",
+  "chainId": 42161,
+  "deploymentBlock": 519342582,
+  "lastDeploymentBlock": 519343122,
+  "deployedAt": "2026-10-29T11:27:07Z",
+  "completedAt": "2026-10-29T11:29:42Z",
+  "source": {
+    "commit": "2c038f34455a8f319f61b7dddf460a7f147e69b8",
+    "script": "script/DeployDigitalCarat.s.sol:DeployDigitalCarat",
+    "broadcast": "broadcast/DeployDigitalCarat.s.sol/42161/run-1793273218592.json",
+    "foundry": "1.8.5"
+  },
+  "admin": "0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53",
+  "pendingAdmin": "0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9",
+  "giftOperator": "0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53",
+  "addresses": {
+    "DGENFT": "0x603687aBbc6504Bc6EA8836fA44cFBaE92b42D4E",
+    "GemRegistry": "0x195f80cB544Ab5FDEE5F92C318F92F004C0aF08c",
+    "PaymentTokenRegistry": "0xF2Ff239B05a6689EE62996421ee9E9f70EFb330E",
+    "ReserveManager": "0x6CEa1dF4d501d756a16F0B376fCA17579a2A1124",
+    "ComplianceRegistry": "0xbA4c75647C938080d7CDce6C186513E62453aa46",
+    "Treasury": "0x4F5113644d5A0314D52Db5E4a2EBC247B661b417",
+    "PrimarySaleAuction": "0xdC7440e02e1dD5bD64FcBe36eA2f4f67A6d56cA3",
+    "RedemptionManager": "0xdfdeb2d812b3d9a3Baa48213067AdcCb2B9dc520",
+    "Marketplace": "0x3E6F3856A5eFAa3492A1819221dC17c276dE5A27",
+    "SwapEscrow": "0x161bb576eE61df8389ED1769cBb8A24aE7525D19"
+  },
+  "implementations": {
+    "DGENFT": "0xEaE29a6FeE4b717c22dc555B1F6d56c29227ed9e",
+    "GemRegistry": "0x00EdC6CE1266dEcAFDE9870e3D38Bf7eaD9b2442",
+    "PaymentTokenRegistry": "0xA7f54AE93bc42dCd7b29cE95c4C758d637eA12f1",
+    "ReserveManager": "0x4d0dB41EA660B339a18982EcDC78Bbf60edE2ba0",
+    "ComplianceRegistry": "0xbB76ecc4d19935A1b268c8D57e043D8066872632",
+    "Treasury": "0x1b2c9400bc22067509620Ea95d14A24Df46e03a4",
+    "PrimarySaleAuction": "0x8620C1579bF8F0fB40c4238d7A34F6113BFAF151",
+    "RedemptionManager": "0x2B2fc7f9b7D657Ed2bdb2BBcd0e196AE3aF56Cb9",
+    "Marketplace": "0x5E73ED92BFFF41bf6b4EC60299232490b991ceF8",
+    "SwapEscrow": "0xf6000B172B140C4401A9093F86Ca46f5680AbFED"
+  },
+  "paymentAssets": {
+    "nativeEth": "0x0000000000000000000000000000000000000000",
+    "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    "usdcUsdFeed": "0x50834F3163758fcC1Df9973b6e91f0F0F0434aD3",
+    "ethUsdFeed": "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612",
+    "sequencerUptimeFeed": "0xFdB631F5EE196F0ed6FAa767959853A9F217697D"
+  },
+  "configuration": {
+    "priceStaleAfterSeconds": 90000,
+    "ethUsdMinAnswer": 50000000000,
+    "ethUsdMaxAnswer": 1000000000000,
+    "usdcMinAnswer": 80000000,
+    "usdcMaxAnswer": 120000000,
+    "sequencerGracePeriodSeconds": 3600,
+    "defaultReserveBps": 0,
+    "reserveBrackets": [
+      {
+        "minPriceUsd": "0",
+        "maxPriceUsd": "1000000000000000000000",
+        "reserveBps": 0
+      },
+      {
+        "minPriceUsd": "1000000000000000000000",
+        "maxPriceUsd": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "reserveBps": 0
+      }
+    ],
+    "minimumCoverageBps": 9500,
+    "secondaryFeeBps": 200,
+    "feeAndReserveRecipient": "0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9",
+    "collectionOwner": "0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9",
+    "royaltyBps": 0,
+    "contractURI": "https://digitalcarat.io/collection.json",
+    "redemption": {
+      "authorizer": "0xB34E565A76f0C2A2Db5Da53BEE31FBCE4727847E",
+      "proofApprover": "0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53",
+      "recoveryApprovers": [
+        "0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9",
+        "0xb72DC001f39f9a4A8E1cA1cd4271060860E56742"
+      ],
+      "recoveryThreshold": 2,
+      "recoveryDelaySeconds": 604800
+    }
+  },
+  "proxyDeploymentTransactions": {
+    "DGENFT": "0x8b70d047305b9ce7b155571f8fd7bfc3711e7acd5360e4b4f63112901fb80ff6",
+    "GemRegistry": "0xcb710fb84b03d4532b0196b81227f7fe5eba213c6b069012d5ed71feefcfba3e",
+    "PaymentTokenRegistry": "0xcf1ee753a91583cba6b93667a4800a6486a3ba8477b8b5ed85bdf371d5898944",
+    "ReserveManager": "0xa0587b7ea61f055cc689e40da8ae5688d33f4d451f5a69f89c3f18ddf4276cba",
+    "ComplianceRegistry": "0x79831f75592e62e7d93c02ee24e83d7e413f005d5df69427f698919744e90490",
+    "Treasury": "0xad8ae86d9f994144d413ddacd44d7fecf967acb8bd47a44a62fade60bbac2abc",
+    "PrimarySaleAuction": "0x59f8d2c824db2846a9f59608c1c291d023ba044e2deb036a969f07eb1d631c4a",
+    "RedemptionManager": "0xfb27749cd8899d639551d478c07449e9643ed3187e677dc10281c04fd625eb2f",
+    "Marketplace": "0x9df5ced24c659dfb0703b960093eaba07fad028532970cba1d6a30101555fb67",
+    "SwapEscrow": "0x78347ca97fa10f7d99f3ca9105ac4503ab5e720a2e9a88e39c6da51164d4d80e"
+  },
+  "cost": {
+    "transactions": 49,
+    "gasUsed": 32828687,
+    "feeWei": "657438646772687"
+  },
+  "verification": {
+    "receiptCount": 49,
+    "allReceiptsSuccessful": true,
+    "firstBlockHash": "0x63df1076ca60492323fb84f913760de323abb70d7bfca4398d280bb255591980",
+    "lastBlockHash": "0xa06cf13efc3d4201bfe27fe9eb48deb85b60b87c6e49c1da9a816dd7c3dedc32",
+    "proxyImplementationsVerified": true,
+    "rolesVerified": true,
+    "configurationVerified": true,
+    "priceFeedsLive": true,
+    "sequencerUptimeChecked": true,
+    "safeHoldsNoRolesYet": true
+  },
+  "handover": "pending: HandoverRoles grant()/renounce() to the Safe once 0xCc62... is removed from it or its threshold is raised to 2"
+}
