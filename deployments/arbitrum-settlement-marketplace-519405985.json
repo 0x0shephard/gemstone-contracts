@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "release": "arbitrum-settlement-marketplace-519405985",
+  "network": "arbitrum-one",
+  "chainId": 42161,
+  "upgradeBlock": 519405985,
+  "upgradedAt": "2026-10-29T16:06:30Z",
+  "source": {
+    "commit": "690a851a3b24f2fed89e52d4f1104ae2db4a6a8f",
+    "script": "script/UpgradeMarketplace.s.sol:UpgradeMarketplace (IMPLEMENTATION_ONLY=true)"
+  },
+  "proxy": "0x3E6F3856A5eFAa3492A1819221dC17c276dE5A27",
+  "previousImplementation": "0x5E73ED92BFFF41bf6b4EC60299232490b991ceF8",
+  "implementation": "0xA547151653dBCC411D998199Fcb4Fb75F82937e0",
+  "implementationCodeHash": "0x7c82bf610403ec11228b8f4ca156567520a96da0ae95fd6fbf936c1fae1a8f25",
+  "frontendAbiSha256": "969a283381dbf452f188c7550b7fb792af35949be2869fbaf9058998edc0e226",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0xed7feb8d515af6e189d6e46263386e75618e5540c45034e1eb5aebbbad95fb09",
+      "blockNumber": 519403946,
+      "blockHash": "0x2f618e248a3d85c1023a0a5aac2640af543c18fa0e32b8a95b56d66baede0977",
+      "gasUsed": 4343049,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x58bcf1ec00bc8ef06b291df07eff64fd580e2c3ce02a1bd2abc3c7e8aa23f86e",
+      "blockNumber": 519405985,
+      "blockHash": "0x55f55737cce752f07b46c1441ab895b77e4c15e7135c1603bbff3c8b2b8d1b7a",
+      "gasUsed": 129632,
+      "status": 1,
+      "executedBy": "Safe 0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9 (one batched transaction for all three proxies)"
+    }
+  },
+  "change": "Listing-auction settlement checks the listing ask plus reserve shortfall; acceptOffer only checks the reserve shortfall, not the bid-time USD value."
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "release": "arbitrum-settlement-primary-sale-auction-519405985",
+  "network": "arbitrum-one",
+  "chainId": 42161,
+  "upgradeBlock": 519405985,
+  "upgradedAt": "2026-10-29T16:06:30Z",
+  "source": {
+    "commit": "690a851a3b24f2fed89e52d4f1104ae2db4a6a8f",
+    "script": "script/UpgradePrimarySaleAuction.s.sol:UpgradePrimarySaleAuction (IMPLEMENTATION_ONLY=true)"
+  },
+  "proxy": "0xdC7440e02e1dD5bD64FcBe36eA2f4f67A6d56cA3",
+  "previousImplementation": "0x8620C1579bF8F0fB40c4238d7A34F6113BFAF151",
+  "implementation": "0x0aE383f314456A8a8D153e4Faa03E072AB7f873B",
+  "implementationCodeHash": "0xab069c8382170dbf648cc1b844f92c045482b70738a06961bd0404edb8f1984d",
+  "frontendAbiSha256": "094f86d7ec36c50765f66577f199207c8edd325a178caeab2c724efeadb4412d",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0xab551939adf9eadb5c287d148396cd6fdba072e5daab2dc327cb2c3ec5fc7566",
+      "blockNumber": 519403885,
+      "blockHash": "0x189ccc24f5312945f0e79183f6f088f557b3545344eb30e92754031f657016ce",
+      "gasUsed": 3717035,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x58bcf1ec00bc8ef06b291df07eff64fd580e2c3ce02a1bd2abc3c7e8aa23f86e",
+      "blockNumber": 519405985,
+      "blockHash": "0x55f55737cce752f07b46c1441ab895b77e4c15e7135c1603bbff3c8b2b8d1b7a",
+      "gasUsed": 129632,
+      "status": 1,
+      "executedBy": "Safe 0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9 (one batched transaction for all three proxies)"
+    }
+  },
+  "change": "Settlement requires the escrow to cover the auction floor plus the reserve shortfall, not the bid-time USD value, so feed ticks between bid and settlement no longer void sales."
+}
