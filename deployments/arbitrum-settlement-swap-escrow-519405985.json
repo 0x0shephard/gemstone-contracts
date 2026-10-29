@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "release": "arbitrum-settlement-swap-escrow-519405985",
+  "network": "arbitrum-one",
+  "chainId": 42161,
+  "upgradeBlock": 519405985,
+  "upgradedAt": "2026-10-29T16:06:30Z",
+  "source": {
+    "commit": "690a851a3b24f2fed89e52d4f1104ae2db4a6a8f",
+    "script": "script/UpgradeSwapEscrow.s.sol:UpgradeSwapEscrow (IMPLEMENTATION_ONLY=true)"
+  },
+  "proxy": "0x161bb576eE61df8389ED1769cBb8A24aE7525D19",
+  "previousImplementation": "0xf6000B172B140C4401A9093F86Ca46f5680AbFED",
+  "implementation": "0x1138Ac7dd66975E08B4CF596426E3D52e2BE6263",
+  "implementationCodeHash": "0xc12c4d0ad7a560ec2686941343d0a1aa826670045c8ce2b63b00891f350dcef8",
+  "frontendAbiSha256": "12b56849bbbc126ad8c4c08ecbed7c170e78e5fece9631eb53fe5ebed22cac2b",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x665890d60a30d33d64abf3345dd8bd7e92c46e62e20dfa3e038f7689b3be4fae",
+      "blockNumber": 519404009,
+      "blockHash": "0xa7e8c905c08ebdac8c7a654897c1064f877395173f71db666f9fec2779de162f",
+      "gasUsed": 2320822,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x58bcf1ec00bc8ef06b291df07eff64fd580e2c3ce02a1bd2abc3c7e8aa23f86e",
+      "blockNumber": 519405985,
+      "blockHash": "0x55f55737cce752f07b46c1441ab895b77e4c15e7135c1603bbff3c8b2b8d1b7a",
+      "gasUsed": 129632,
+      "status": 1,
+      "executedBy": "Safe 0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9 (one batched transaction for all three proxies)"
+    }
+  },
+  "change": "requireSequencerUp only when a reserve quote is needed, so swaps needing no reserve work during a sequencer outage."
+}
