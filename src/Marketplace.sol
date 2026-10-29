@@ -368,6 +368,7 @@ contract Marketplace is
 
     /// @notice Accepts an active offer and transfers the NFT to the bidder.
     /// @dev Seller receives sale proceeds less secondary fee; reserve shortfall is funded first.
+    /// The escrow is re-quoted only to check it still covers that shortfall.
     /// @param offerId Offer id to accept.
     function acceptOffer(uint256 offerId) external nonReentrant whenNotPaused {
         Offer memory offer = offers[offerId];
@@ -382,9 +383,12 @@ contract Marketplace is
         _requireMintedGemId(gemId);
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
-        uint256 requiredUsd = offer.saleUsdValue + reserveUsd;
+        // The owner chooses to accept, so the sale price is theirs to judge: a feed tick since the
+        // offer was made must not block it. The escrow only has to fund the reserve shortfall.
+        // When `reserveUsd` is non-zero this also keeps `currentEscrowUsd` non-zero for the
+        // pro-rata split below; when it is zero the split returns zero without dividing.
         uint256 currentEscrowUsd = paymentRegistry.quoteTokenToUsd(offer.paymentAsset, offer.amount);
-        if (currentEscrowUsd < requiredUsd) revert PriceNotMet();
+        if (currentEscrowUsd < reserveUsd) revert PriceNotMet();
 
         uint256 reserveAmount = _proRataAmountRoundUp(offer.amount, reserveUsd, currentEscrowUsd);
         uint256 saleAmount = offer.amount - reserveAmount;
@@ -401,8 +405,8 @@ contract Marketplace is
 
     /// @notice Settles the winning bid on an escrowed listing after 24 hours.
     /// @dev Permissionless so a scheduler or either party may finalize it. If a
-    /// fresh oracle quote no longer covers the sale plus reserve shortfall, the
-    /// bidder is refunded and the token remains listed for a new auction.
+    /// fresh oracle quote no longer covers the listing's ask plus reserve shortfall,
+    /// the bidder is refunded and the token remains listed for a new auction.
     function settleListingAuction(uint256 tokenId) external nonReentrant whenNotPaused returns (bool sold) {
         Listing memory listing = listings[tokenId];
         if (listing.seller == address(0)) revert NotListed();
@@ -426,8 +430,12 @@ contract Marketplace is
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
         (bool quoted, uint256 currentEscrowUsd) = _quotePayment(offer.paymentAsset, offer.amount);
 
-        uint256 requiredUsd = offer.saleUsdValue + reserveUsd;
-        if (!quoted || currentEscrowUsd < requiredUsd) {
+        // The bid-time `saleUsdValue` only orders bids. Settlement needs the escrow to cover what the
+        // seller listed for plus today's reserve shortfall, so an ordinary feed tick between bid and
+        // settlement neither voids the sale nor lets a binding bidder escape it during a dip.
+        // `list` rejects a zero ask, so a passing escrow is non-zero for the pro-rata split.
+        uint256 requiredUsd = listings[tokenId].priceUsd + reserveUsd;
+        if (!quoted || currentEscrowUsd == 0 || currentEscrowUsd < requiredUsd) {
             _refundListingAuction(tokenId, offerId);
             return false;
         }

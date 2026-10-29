@@ -274,10 +274,11 @@ contract SwapEscrow is
     ///      reserve balance therefore qualifies; only an empty reserve blocks it,
     ///      matching the zero-reserve transfer rule enforced by `DGENFT`.
     function _requireSwapReserve(uint256 gemId, uint256 referenceValueUsd) private view {
-        // During an L2 outage reserves value at zero; report the outage, not an empty reserve.
-        paymentRegistry.requireSequencerUp();
         uint256 requiredUsd = reserveManager.requiredReserveUsd(gemId, referenceValueUsd);
         if (requiredUsd == 0) return;
+        // Only the reserve balance below needs oracle quotes. During an L2 outage reserves value
+        // at zero; report the outage, not an empty reserve.
+        paymentRegistry.requireSequencerUp();
         uint256 balanceUsd = reserveManager.reserveBalanceUsd(gemId);
         if (balanceUsd == 0) revert ReserveCoverageTooLow(gemId, requiredUsd, balanceUsd);
     }

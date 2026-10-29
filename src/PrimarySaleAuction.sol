@@ -298,6 +298,8 @@ contract PrimarySaleAuction is
     }
 
     /// @notice Settles an ended auction or refunds the highest bidder if settlement cannot mint.
+    /// @dev The escrow is re-quoted at settlement and must still cover the auction floor plus the
+    /// current reserve shortfall; otherwise the highest bid is refunded.
     /// @param gemId Auctioned gem id.
     /// @return tokenId Minted token id, or zero when the highest bid was refunded.
     function settleAuction(uint256 gemId) external nonReentrant whenNotPaused returns (uint256 tokenId) {
@@ -315,13 +317,19 @@ contract PrimarySaleAuction is
         paymentRegistry.requireSequencerUp();
         GemRegistry.Gem memory gem = registry.getGem(gemId);
         uint256 currentReserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
-        uint256 requiredUsd = auction.usdValue + currentReserveUsd;
+        // The bid-time `usdValue` only orders bids. Settlement re-quotes the escrow and needs it to
+        // cover the auction floor (never below the gem price) plus today's reserve shortfall, so an
+        // ordinary feed tick between bid and settlement neither voids the sale nor lets a binding
+        // bidder escape it by settling during a dip.
+        uint256 requiredUsd = auction.floorUsd + currentReserveUsd;
         (bool quoted, uint256 currentEscrowUsd) = _quotePayment(auction.paymentAsset, auction.amount);
         if (!quoted) {
             _refundHighestBid(gemId, keccak256("PAYMENT_QUOTE_FAILED"));
             return 0;
         }
-        if (currentEscrowUsd < requiredUsd) {
+        // `floorUsd` is non-zero (enforced at creation), so a passing escrow is non-zero and the
+        // pro-rata reserve split below cannot divide by zero.
+        if (currentEscrowUsd == 0 || currentEscrowUsd < requiredUsd) {
             _refundHighestBid(gemId, keccak256("INSUFFICIENT_SETTLEMENT_ESCROW"));
             return 0;
         }
