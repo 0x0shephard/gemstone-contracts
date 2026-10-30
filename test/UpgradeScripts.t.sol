@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {UpgradeGemRegistry} from "../script/UpgradeGemRegistry.s.sol";
 import {UpgradeMarketplace} from "../script/UpgradeMarketplace.s.sol";
 import {UpgradePrimarySaleAuction} from "../script/UpgradePrimarySaleAuction.s.sol";
 import {UpgradeSwapEscrow} from "../script/UpgradeSwapEscrow.s.sol";
@@ -67,5 +68,23 @@ contract UpgradeScriptsTest is BaseTest {
         assertEq(_implementation(address(marketplace)), marketImpl);
         assertEq(_implementation(address(swapEscrow)), swapImpl);
         assertEq(marketplace.secondaryFeeBps(), 200);
+    }
+
+    function testGemRegistryScriptDeploysForTheSafeAndRefusesADirectUpgradeWithoutTheRole() public {
+        UpgradeGemRegistry script = new UpgradeGemRegistry();
+        address before = _implementation(address(registry));
+
+        address impl = script.upgrade(DEPLOYER_KEY, address(registry), true);
+        assertGt(impl.code.length, 0);
+        assertEq(_implementation(address(registry)), before);
+
+        vm.expectRevert(
+            bytes("Broadcaster lacks UPGRADER_ROLE (the Safe holds it): rerun with IMPLEMENTATION_ONLY=true")
+        );
+        script.upgrade(DEPLOYER_KEY, address(registry), false);
+
+        (bool ok,) = address(registry).call(abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (impl, bytes(""))));
+        assertTrue(ok);
+        assertEq(_implementation(address(registry)), impl);
     }
 }

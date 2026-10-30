@@ -23,7 +23,9 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     enum PrimarySaleMode {
         None,
         BuyNow,
-        Auction
+        Auction,
+        // Appended: stored modes are enum ordinals, so new values must come last.
+        SellerMint
     }
 
     struct Gem {
@@ -58,6 +60,7 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     );
     event GemListed(uint256 indexed gemId, uint256 priceUsd, PrimarySaleMode saleMode);
     event PrimaryAuctionStatusUpdated(uint256 indexed gemId, bool active);
+    event PrimarySaleModeUpdated(uint256 indexed gemId, PrimarySaleMode previousMode, PrimarySaleMode newMode);
     event GemMinted(uint256 indexed gemId, uint256 indexed tokenId);
     event RedemptionRequested(uint256 indexed gemId, bytes32 requestHash);
     event RedemptionCancelled(uint256 indexed gemId);
@@ -194,6 +197,28 @@ contract GemRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         primarySaleMode[gemId] = saleMode;
         gem.status = GemStatus.Listed;
         emit GemListed(gemId, priceUsd, saleMode);
+    }
+
+    /// @notice Switches a listed auction gem to minting straight to its seller.
+    /// @dev Callable only by `LISTER_ROLE`. One-way: only Auction -> SellerMint, only while the gem
+    /// is listed and has no live primary auction (an unbid round must be cancelled first). A
+    /// seller-mint gem never returns to auction.
+    /// @param gemId Listed gem id.
+    /// @param newMode Must be `SellerMint`.
+    function setPrimarySaleMode(uint256 gemId, PrimarySaleMode newMode)
+        external
+        whenNotPaused
+        onlyRole(Roles.LISTER_ROLE)
+    {
+        Gem storage gem = _existingGem(gemId);
+        if (gem.status != GemStatus.Listed) revert InvalidStatus(gem.status);
+        PrimarySaleMode previousMode = primarySaleMode[gemId];
+        if (previousMode != PrimarySaleMode.Auction || newMode != PrimarySaleMode.SellerMint) {
+            revert InvalidPrimarySaleMode();
+        }
+        if (primaryAuctionActive[gemId]) revert ActivePrimaryAuction();
+        primarySaleMode[gemId] = newMode;
+        emit PrimarySaleModeUpdated(gemId, previousMode, newMode);
     }
 
     /// @notice Records that a listed gem has been minted into an NFT.
