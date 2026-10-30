@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "release": "arbitrum-seller-mint-gem-registry-519701377",
+  "network": "arbitrum-one",
+  "chainId": 42161,
+  "upgradeBlock": 519701377,
+  "upgradedAt": "2026-10-30T14:19:33Z",
+  "source": {
+    "commit": "d812a8748d10ad96485989ef52fb7c895c60c159",
+    "script": "script/UpgradeGemRegistry.s.sol:UpgradeGemRegistry (IMPLEMENTATION_ONLY=true)"
+  },
+  "proxy": "0x195f80cB544Ab5FDEE5F92C318F92F004C0aF08c",
+  "previousImplementation": "0x00EdC6CE1266dEcAFDE9870e3D38Bf7eaD9b2442",
+  "implementation": "0x7076c4b4F48dC28BD323Eaa7e72c7d976e039434",
+  "implementationCodeHash": "0xf3b77ea2122f15e9331888fb23c9328afb29b7ebdd013d81f254ebb02e95a290",
+  "frontendAbiSha256": "d68ab3cc2c7439493c13acd050b9f0cb11ee917ac051ffb3741e7b126aa7563e",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x8079a8598d7559919df23c9d3f9caa92e07592e46d6087700995f4eaf45ca627",
+      "blockNumber": 519700275,
+      "blockHash": "0xd87726595a841db7dea16a71bd34e462cb374bf15657e7f35e0da742558eb048",
+      "gasUsed": 2165150,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x8827681e72e8076dc418d5c38cf3c19845d06ef43df5c2af0d7427653ef82915",
+      "blockNumber": 519701377,
+      "blockHash": "0xc9a1ea4e3e766e40c180f773050ff777dda9c80d357566d14fd7d00ad21d42a6",
+      "gasUsed": 112059,
+      "status": 1,
+      "executedBy": "Safe 0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9 (one batched transaction, GemRegistry first, then PrimarySaleAuction)"
+    }
+  },
+  "change": "Adds PrimarySaleMode.SellerMint (appended) and setPrimarySaleMode for the one-way Auction -> SellerMint switch, only while listed with no live primary auction."
+}
