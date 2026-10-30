@@ -50,6 +50,9 @@ contract PrimarySaleAuction is
 
     mapping(uint256 gemId => Auction) public auctions;
     mapping(address account => mapping(address asset => uint256 amount)) public pendingRefunds;
+    /// @notice USD fee (18 decimals) a seller pays to mint their own stone; set by the admin (Safe).
+    /// @dev Appended after the original layout; defaults to 0, so minting is free until set.
+    uint256 public sellerMintFeeUsd;
 
     event BuyNow(
         uint256 indexed gemId,
@@ -76,6 +79,16 @@ contract PrimarySaleAuction is
     event RefundClaimed(address indexed account, address indexed asset, uint256 amount);
     event PaymentSurplusRefunded(address indexed account, address indexed asset, uint256 amount);
     event AuctionSettlementSkipped(uint256 indexed gemId, bytes reason);
+    event SellerMintFeeUpdated(uint256 feeUsd);
+    event SellerMinted(
+        uint256 indexed gemId,
+        uint256 indexed tokenId,
+        address indexed seller,
+        address paymentAsset,
+        uint256 paidAmount,
+        uint256 feeUsd,
+        uint256 reserveUsd
+    );
 
     error InvalidAddress();
     error InvalidAmount();
@@ -90,6 +103,7 @@ contract PrimarySaleAuction is
     error BatchTooLarge();
     error NotHighestBidder();
     error BidLocked(uint256 withdrawableAt);
+    error NotSeller();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     /// @dev Locks the implementation contract so only proxy instances can be initialized.
@@ -179,6 +193,83 @@ contract PrimarySaleAuction is
         emit BuyNow(gemId, tokenId, msg.sender, paymentAsset, requiredAmount, usdValue);
     }
 
+    /// @notice Sets the USD fee a seller pays to mint their own stone.
+    /// @param feeUsd Fee in 18-decimal USD; 0 makes seller minting free.
+    function setSellerMintFeeUsd(uint256 feeUsd) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        sellerMintFeeUsd = feeUsd;
+        emit SellerMintFeeUpdated(feeUsd);
+    }
+
+    /// @notice What `mintToSeller` would charge right now, in 18-decimal USD.
+    /// @dev Zero for both means the operator may mint on the seller's behalf with no payment.
+    /// @param gemId Listed gem id.
+    /// @return reserveUsd Current reserve shortfall at the gem's price.
+    /// @return feeUsd Current seller-mint fee.
+    function sellerMintDueUsd(uint256 gemId) external view returns (uint256 reserveUsd, uint256 feeUsd) {
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
+        feeUsd = sellerMintFeeUsd;
+    }
+
+    /// @notice Mints a listed seller-mint gem straight to its seller.
+    /// @dev The NFT always goes to `gem.seller`, never to the caller, so an operator call cannot
+    /// divert it. When nothing is due (no reserve shortfall and no fee) the lister (operator) or the
+    /// seller may call it with no payment. Otherwise only the seller may, paying the shortfall plus
+    /// the fee; any surplus is refunded. The reserve part funds the gem's reserve and the fee goes
+    /// to Treasury's platform recipient. No sale split applies, because nothing is sold.
+    /// @param gemId Listed gem id in `SellerMint` mode.
+    /// @param paymentAsset Payment asset, or address(0) for native ETH; ignored when nothing is due.
+    /// @param amount Maximum payment; must equal `msg.value` for native ETH, and 0 when nothing is due.
+    /// @return tokenId Minted token id.
+    function mintToSeller(uint256 gemId, address paymentAsset, uint256 amount)
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        returns (uint256 tokenId)
+    {
+        if (!registry.canMint(gemId)) revert GemNotMintable();
+        if (registry.primarySaleMode(gemId) != GemRegistry.PrimarySaleMode.SellerMint) {
+            revert WrongPrimarySaleMode();
+        }
+        if (registry.primaryAuctionActive(gemId)) revert AuctionActive();
+        reserveManager.requireSolvent();
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+
+        uint256 reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
+        uint256 feeUsd = sellerMintFeeUsd;
+        uint256 dueUsd = reserveUsd + feeUsd;
+        uint256 paidAmount;
+
+        if (dueUsd == 0) {
+            if (msg.sender != gem.seller && !hasRole(Roles.LISTER_ROLE, msg.sender)) revert NotSeller();
+            if (msg.value != 0 || amount != 0) revert InvalidAmount();
+        } else {
+            if (msg.sender != gem.seller) revert NotSeller();
+            paymentRegistry.requireSequencerUp();
+            uint256 requiredAmount = paymentRegistry.quoteUsdToToken(paymentAsset, dueUsd);
+            uint256 received = _collectPayment(paymentAsset, amount);
+            if (received < requiredAmount) revert BidTooLow();
+            uint256 surplus = received - requiredAmount;
+            if (surplus != 0) {
+                _refund(msg.sender, paymentAsset, surplus);
+                emit PaymentSurplusRefunded(msg.sender, paymentAsset, surplus);
+            }
+            paidAmount = requiredAmount;
+            uint256 reserveAmount = _proRataAmountRoundUp(requiredAmount, reserveUsd, dueUsd);
+            uint256 feeAmount = requiredAmount - reserveAmount;
+            if (reserveAmount != 0) _fundReserve(gemId, paymentAsset, reserveAmount);
+            _creditRefund(treasury.platformRecipient(), paymentAsset, feeAmount);
+        }
+        reserveManager.requireFunded(gemId, gem.priceUsd);
+
+        tokenId = nft.mintTo(gem.seller, gemId, gem.metadataURI);
+        registry.markMinted(gemId, tokenId);
+        reserveManager.syncProjectedLiabilityUsd(gemId, gem.priceUsd);
+
+        emit SellerMinted(gemId, tokenId, gem.seller, paymentAsset, paidAmount, feeUsd, reserveUsd);
+    }
+
     /// @notice Creates a scheduled primary auction for a listed gem.
     /// @dev Callable only by `LISTER_ROLE`; `floorUsd` must be at least gem price.
     /// @param gemId Listed gem id.
@@ -242,6 +333,8 @@ contract PrimarySaleAuction is
         if (block.timestamp < auction.startTime) revert InvalidAuction();
         if (block.timestamp >= auction.endTime) revert AuctionEnded();
         if (!_canMint(gemId)) revert GemNotMintable();
+        // A stone switched to seller-mint must not take bids even if an auction record lingers.
+        if (registry.primarySaleMode(gemId) != GemRegistry.PrimarySaleMode.Auction) revert WrongPrimarySaleMode();
         reserveManager.requireSolvent();
 
         uint256 received = _collectPayment(paymentAsset, amount);
