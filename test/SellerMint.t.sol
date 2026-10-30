@@ -33,6 +33,8 @@ contract SellerMintTest is BaseTest {
     function testOperatorMintsToSellerWhenNothingIsDue() public {
         _zeroReserve();
         uint256 gemId = _sellerMintGem("ipfs://seller-mint-free");
+        (uint256 reserveDue, uint256 feeDue) = sale.sellerMintDueUsd(gemId);
+        assertEq(reserveDue + feeDue, 0);
 
         vm.expectEmit(true, false, true, true, address(sale));
         emit PrimarySaleAuction.SellerMinted(gemId, 0, seller, address(0), 0, 0, 0);
@@ -106,6 +108,9 @@ contract SellerMintTest is BaseTest {
         uint256 gemId = _sellerMintGem("ipfs://seller-mint-reserve");
         uint256 reserveUsd = reserveManager.shortfallUsd(gemId, PRICE);
         assertGt(reserveUsd, 0);
+        (uint256 quotedReserve, uint256 quotedFee) = sale.sellerMintDueUsd(gemId);
+        assertEq(quotedReserve, reserveUsd);
+        assertEq(quotedFee, 5e18);
 
         uint256 dueUsdc = (reserveUsd + 5e18) / 1e12;
         uint256 platformBefore = usdc.balanceOf(platform);

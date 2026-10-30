@@ -200,6 +200,17 @@ contract PrimarySaleAuction is
         emit SellerMintFeeUpdated(feeUsd);
     }
 
+    /// @notice What `mintToSeller` would charge right now, in 18-decimal USD.
+    /// @dev Zero for both means the operator may mint on the seller's behalf with no payment.
+    /// @param gemId Listed gem id.
+    /// @return reserveUsd Current reserve shortfall at the gem's price.
+    /// @return feeUsd Current seller-mint fee.
+    function sellerMintDueUsd(uint256 gemId) external view returns (uint256 reserveUsd, uint256 feeUsd) {
+        GemRegistry.Gem memory gem = registry.getGem(gemId);
+        reserveUsd = reserveManager.shortfallUsd(gemId, gem.priceUsd);
+        feeUsd = sellerMintFeeUsd;
+    }
+
     /// @notice Mints a listed seller-mint gem straight to its seller.
     /// @dev The NFT always goes to `gem.seller`, never to the caller, so an operator call cannot
     /// divert it. When nothing is due (no reserve shortfall and no fee) the lister (operator) or the
