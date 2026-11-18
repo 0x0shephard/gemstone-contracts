@@ -49,8 +49,10 @@ contract DGENFT is
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     /// @dev ERC-7572: tells marketplaces to re-read `contractURI`.
     event ContractURIUpdated();
+    event TokenURIUpdated(uint256 indexed tokenId, string uri);
 
     error InvalidAddress();
+    error InvalidTokenURI();
     error GemAlreadyMinted();
     error TokenLocked();
     error ReserveGuardNotConfigured();
@@ -281,6 +283,19 @@ contract DGENFT is
     function setContractURI(string calldata uri) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _contractURI = uri;
         emit ContractURIUpdated();
+    }
+
+    /// @notice Replaces a minted token's metadata URI, for example to correct its picture.
+    /// @dev Callable only by `METADATA_ROLE`. Emits ERC-4906 `MetadataUpdate` (from
+    ///      `_setTokenURI`) so marketplaces refresh, plus `TokenURIUpdated` with the new URI.
+    ///      `GemRegistry.metadataURI` keeps the URI the gem was registered with.
+    /// @param tokenId Existing token.
+    /// @param uri New metadata URI; must not be empty.
+    function setTokenURI(uint256 tokenId, string calldata uri) external onlyRole(Roles.METADATA_ROLE) {
+        _requireOwned(tokenId);
+        if (bytes(uri).length == 0) revert InvalidTokenURI();
+        _setTokenURI(tokenId, uri);
+        emit TokenURIUpdated(tokenId, uri);
     }
 
     function _addTrustedEscrow(address escrow) private {
