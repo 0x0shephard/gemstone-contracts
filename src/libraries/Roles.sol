@@ -16,4 +16,6 @@ library Roles {
     bytes32 internal constant PROOF_APPROVER_ROLE = keccak256("PROOF_APPROVER_ROLE");
     bytes32 internal constant AUTHORIZER_ROLE = keccak256("AUTHORIZER_ROLE");
     bytes32 internal constant RECOVERY_APPROVER_ROLE = keccak256("RECOVERY_APPROVER_ROLE");
+    /// @dev May replace a minted token's metadata URI on DGENFT (picture corrections).
+    bytes32 internal constant METADATA_ROLE = keccak256("METADATA_ROLE");
 }
