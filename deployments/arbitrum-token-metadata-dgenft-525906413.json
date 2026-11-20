@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "release": "arbitrum-token-metadata-dgenft-525906413",
+  "network": "arbitrum-one",
+  "chainId": 42161,
+  "upgradeBlock": 525906413,
+  "upgradedAt": "2026-11-20T10:54:34Z",
+  "source": {
+    "commit": "0169bfce658c0eaef75cebb23d166afe5ee5527c",
+    "script": "script/UpgradeDGENFT.s.sol:UpgradeDGENFT (IMPLEMENTATION_ONLY=true, METADATA_EDITOR=0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53)"
+  },
+  "proxy": "0x603687aBbc6504Bc6EA8836fA44cFBaE92b42D4E",
+  "previousImplementation": "0xEaE29a6FeE4b717c22dc555B1F6d56c29227ed9e",
+  "implementation": "0xd06Bff016a93Bb42f9C687a09CC00d7ea638f0d1",
+  "implementationCodeHash": "0xf0138489aacc166b45e88bd65318b11558ebccd39a9d0864cf37405e7450384a",
+  "frontendAbiSha256": "4550926d1560e450efd291440f04ab28061aab52abd81a894dd591ab032a8dd0",
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x83a7c350cd4d309b1ee0a65d73ebb8d08eff8070eef271a6f7e9cc8ee23d8052",
+      "blockNumber": 525897476,
+      "blockHash": "0x5a2e386e81f97b98bfed79a809427318f67e177b6718b1a768469125d02b6c41",
+      "gasUsed": 3378179,
+      "status": 1
+    },
+    "proxyUpgrade": {
+      "hash": "0x763cb51b8e3ef33883bf01a0a89a0d444ed2ad7ab27140294f93fee95fb56bf2",
+      "blockNumber": 525906413,
+      "blockHash": "0x5fc175be1ea16eeee7fcc9ae6a2f5b42eac2bd0ad45ba8d3b81fbf5ec251e4d0",
+      "gasUsed": 124923,
+      "status": 1,
+      "executedBy": "Safe 0xD420d1bdCFd89eC47437E6Ca97Bf32373a5C94A9 (one batched transaction, relayed: upgradeToAndCall, then grantRole(METADATA_ROLE, 0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53))"
+    }
+  },
+  "roleGrants": [
+    {
+      "role": "METADATA_ROLE",
+      "roleId": "0x6bd6b5318a46e5fff572d5e4258a20774aab40cc35ac7680654b9081fcc82f80",
+      "account": "0x89c2c9fA2711Fef55C55a07fd2A7A3bb81505D53"
+    }
+  ],
+  "change": "Adds setTokenURI(tokenId, uri) gated by METADATA_ROLE, emitting ERC-4906 MetadataUpdate and TokenURIUpdated, so an admin can replace a minted token's picture. No storage layout change; GemRegistry metadata is untouched."
+}
